@@ -104,5 +104,51 @@ def analyze(symbol: str, skip_ingest: bool = typer.Option(False, help="Use exist
     console.print("[dim]Decision-support only · paper context · not investment advice.[/]")
 
 
+@app.command()
+def execute(
+    symbol: str,
+    equity: float = typer.Option(100_000, help="Paper account equity."),
+    skip_ingest: bool = typer.Option(False),
+) -> None:
+    """Run the pipeline, then place a PAPER order through Tier 4 guardrails."""
+    from arthaai.execution import ExecutionEngine, TradingHalted
+    from arthaai.orchestration import analyze as run_analyze
+
+    symbol = symbol.upper()
+    with console.status(f"[bold]analysing {symbol}…"):
+        state = run_analyze(symbol, skip_ingest=skip_ingest)
+    verdict, alloc, db = state.get("verdict", {}), state.get("allocation", {}), state.get("db", {})
+    direction = verdict.get("direction", "neutral")
+    last_price = db.get("last_close", 0.0)
+
+    if direction == "neutral" or alloc.get("final_fraction", 0) <= 0:
+        console.print(f"[yellow]No paper order — verdict {direction}, allocation 0.[/]")
+        raise typer.Exit(0)
+
+    engine = ExecutionEngine(equity=equity)
+    try:
+        order = engine.submit(symbol, alloc, last_price, direction)
+    except TradingHalted as exc:
+        console.print(Panel(str(exc), title="Tier 4 · trading halted", border_style="red"))
+        raise typer.Exit(1)
+
+    console.print(Panel(
+        f"[bold]{order.side.upper()}[/] {order.symbol}  ·  notional ${order.notional:,.2f}  "
+        f"({alloc['final_fraction']:.2%} of ${equity:,.0f})\n"
+        f"stop-loss @ {order.stop_loss}  ·  drawdown breaker [{engine.breaker_state}]  ·  "
+        f"[bold]PAPER[/]",
+        title="Tier 4 · paper execution", border_style="magenta",
+    ))
+    console.print("[dim]Simulated order only — no broker contacted.[/]")
+
+
+@app.command()
+def serve(port: int = 8000) -> None:
+    """Run the Tier 1 FastAPI gateway."""
+    import uvicorn
+
+    uvicorn.run("arthaai.gateway.app:app", host="0.0.0.0", port=port)
+
+
 if __name__ == "__main__":
     app()

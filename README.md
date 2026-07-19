@@ -38,6 +38,19 @@ docker compose up -d          # TimescaleDB + Qdrant + Redpanda (schema auto-app
 arthaai health                # datastores reachable?
 arthaai seed-news             # load illustrative news into Qdrant
 arthaai analyze GLD           # run the pipeline (ingests automatically)
+arthaai execute GLD           # analyze -> PAPER order through Tier 4 guardrails
+arthaai serve                 # Tier 1 FastAPI gateway on :8000
+```
+
+On this Mac (Intel Homebrew → Rosetta shell) use the arch-safe wrappers instead:
+`make setup && make up && make analyze SYM=GLD` — the Makefile pins Python to
+x86_64 so the venv wheels always match your shell.
+
+### HTTP gateway
+
+```bash
+arthaai serve
+curl -X POST "localhost:8000/analyze/GLD" -H "Authorization: Bearer dev-token"
 ```
 
 No `ANTHROPIC_API_KEY`? The Master LLM **falls back to a deterministic offline
@@ -57,10 +70,11 @@ internally-hosted model). Add the key to get real Claude synthesis.
 | **TimescaleDB** (hypertable, OHLCV) | [db/schema.sql](arthaai/db/schema.sql), [db/timescale.py](arthaai/db/timescale.py) | ✅ implemented |
 | **Qdrant** (payload-filtered vectors) | [db/qdrant.py](arthaai/db/qdrant.py) | ✅ implemented |
 | **Circuit breaker** (CLOSED/OPEN/HALF-OPEN) | [resiliency/breaker.py](arthaai/resiliency/breaker.py) | ✅ implemented |
+| **Tier 1 gateway** (FastAPI, OAuth 2.1/MCP auth, rate limit) | [gateway/app.py](arthaai/gateway/app.py), [auth.py](arthaai/gateway/auth.py) | ✅ implemented (mTLS = infra) |
+| **Tier 4 execution** (drawdown breaker, stop-loss) | [execution/engine.py](arthaai/execution/engine.py) | ✅ paper-only |
 | **Kafka event bus** | [docker-compose.yml](docker-compose.yml), [data/ingest.py](arthaai/data/ingest.py) | ◐ Redpanda + best-effort producer |
 | **Alt_Agent** (Kpler/Vortexa/Kayrros/Ursa) | [agents/alt_agent.py](arthaai/agents/alt_agent.py) | ○ stub (paid feeds) |
 | **Zero-trust** (SPIFFE/Vault/OPA/mTLS) | [security/policy.py](arthaai/security/policy.py) | ○ in-process seam (infra deferred) |
-| **Tier 1 gateway** (OAuth 2.1, mTLS) / **Tier 4 execution** | — | ○ not built (needs infra + broker) |
 
 ✅ runs · ◐ partial · ○ interface/stub
 

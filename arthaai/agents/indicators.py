@@ -20,11 +20,14 @@ def rsi(close: pd.Series, period: int = 14) -> float | None:
     if len(close) < period + 1:
         return None
     delta = close.diff().dropna()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = (-delta.clip(upper=0)).rolling(period).mean()
-    rs = gain / loss.replace(0, np.nan)
-    val = 100 - 100 / (1 + rs.iloc[-1])
-    return float(val) if pd.notna(val) else None
+    gain = delta.clip(lower=0).rolling(period).mean().iloc[-1]
+    loss = (-delta.clip(upper=0)).rolling(period).mean().iloc[-1]
+    if pd.isna(gain) or pd.isna(loss):
+        return None
+    if loss == 0:  # no downside in the window -> maximally overbought (or flat)
+        return 100.0 if gain > 0 else 50.0
+    rs = gain / loss
+    return float(100 - 100 / (1 + rs))
 
 
 def annualised_stats(close: pd.Series) -> dict[str, float]:
