@@ -39,8 +39,16 @@ arthaai health                # datastores reachable?
 arthaai seed-news             # load illustrative news into Qdrant
 arthaai analyze GLD           # run the pipeline (ingests automatically)
 arthaai execute GLD           # analyze -> PAPER order through Tier 4 guardrails
-arthaai serve                 # Tier 1 FastAPI gateway on :8000
+arthaai backtest GLD          # walk-forward backtest (look-ahead guarded)
+arthaai seed-secrets          # store dev secrets in Vault
+arthaai serve                 # Tier 1 gateway + UI at http://localhost:8000/
 ```
+
+The stack now includes **5 services**: TimescaleDB, Qdrant, Redpanda (Kafka),
+**OPA** (policy engine, :8181) and **Vault** (secrets, :8200). Zero-trust is live:
+OPA evaluates every agent tool call against [policy/arthaai.rego](policy/arthaai.rego),
+and the gateway/LLM credentials are fetched from Vault. Both degrade to safe
+in-process/env fallbacks if a service is down.
 
 On this Mac (Intel Homebrew → Rosetta shell) use the arch-safe wrappers instead:
 `make setup && make up && make analyze SYM=GLD` — the Makefile pins Python to
@@ -70,11 +78,14 @@ internally-hosted model). Add the key to get real Claude synthesis.
 | **TimescaleDB** (hypertable, OHLCV) | [db/schema.sql](arthaai/db/schema.sql), [db/timescale.py](arthaai/db/timescale.py) | ✅ implemented |
 | **Qdrant** (payload-filtered vectors) | [db/qdrant.py](arthaai/db/qdrant.py) | ✅ implemented |
 | **Circuit breaker** (CLOSED/OPEN/HALF-OPEN) | [resiliency/breaker.py](arthaai/resiliency/breaker.py) | ✅ implemented |
-| **Tier 1 gateway** (FastAPI, OAuth 2.1/MCP auth, rate limit) | [gateway/app.py](arthaai/gateway/app.py), [auth.py](arthaai/gateway/auth.py) | ✅ implemented (mTLS = infra) |
+| **Tier 1 gateway** (FastAPI, OAuth 2.1/MCP auth, rate limit) + **UI** | [gateway/app.py](arthaai/gateway/app.py), [dashboard.html](arthaai/gateway/static/dashboard.html) | ✅ implemented (mTLS = infra) |
 | **Tier 4 execution** (drawdown breaker, stop-loss) | [execution/engine.py](arthaai/execution/engine.py) | ✅ paper-only |
-| **Kafka event bus** | [docker-compose.yml](docker-compose.yml), [data/ingest.py](arthaai/data/ingest.py) | ◐ Redpanda + best-effort producer |
+| **OPA policy-as-code** (live Rego, every tool call) | [policy/arthaai.rego](policy/arthaai.rego), [security/opa.py](arthaai/security/opa.py) | ✅ live OPA server + fallback |
+| **HashiCorp Vault** (secrets: gateway token, LLM key) | [security/vault.py](arthaai/security/vault.py) | ✅ live Vault + env fallback |
+| **Offline evaluation** (walk-forward backtest, look-ahead guard) | [backtest/engine.py](arthaai/backtest/engine.py) | ✅ implemented |
+| **Kafka event bus** (producer + consumer) | [data/ingest.py](arthaai/data/ingest.py), [data/consumer.py](arthaai/data/consumer.py) | ✅ Redpanda |
 | **Alt_Agent** (Kpler/Vortexa/Kayrros/Ursa) | [agents/alt_agent.py](arthaai/agents/alt_agent.py) | ○ stub (paid feeds) |
-| **Zero-trust** (SPIFFE/Vault/OPA/mTLS) | [security/policy.py](arthaai/security/policy.py) | ○ in-process seam (infra deferred) |
+| **SPIFFE/SPIRE identity · mTLS · Kubernetes** | [security/policy.py](arthaai/security/policy.py) | ○ ops infra (seam ready) |
 
 ✅ runs · ◐ partial · ○ interface/stub
 

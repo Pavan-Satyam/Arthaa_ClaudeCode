@@ -48,6 +48,34 @@ services:
     volumes:
       - redpanda_data:/var/lib/redpanda/data
 
+  # Zero-trust policy-as-code (Tier 2 §6) — evaluates every agent tool call.
+  opa:
+    image: openpolicyagent/opa:0.68.0
+    container_name: arthaai-opa
+    restart: unless-stopped
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - /policies/arthaai.rego
+    ports:
+      - "${ARTHAAI_OPA_PORT:-8181}:8181"
+    volumes:
+      - ./policy:/policies:ro
+
+  # Secrets management (Tier 2 §6) — dev mode; short-lived creds in production.
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: arthaai-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${ARTHAAI_VAULT_TOKEN:-arthaai-root}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "${ARTHAAI_VAULT_PORT:-8200}:8200"
+
 volumes:
   timescale_data:
   qdrant_data:

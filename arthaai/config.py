@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     kafka_bootstrap: str = "localhost:9092"
     ingest_topic: str = "arthaai.ingest.ticks"
 
+    # Zero-trust infra
+    opa_url: str = "http://localhost:8181"
+    vault_addr: str = "http://localhost:8200"
+    vault_token: str = "arthaai-root"          # dev-mode root token (see docker-compose)
+
     # LLM
     llm_provider: Literal["anthropic", "bedrock"] = "anthropic"
     llm_model: str = "claude-sonnet-5"

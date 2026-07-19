@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ArthaAI · Asset Console</title>
+<style>
+  :root {
+    --bg:#0D1015; --surface:#14181F; --surface2:#1A1F28; --border:#272E39;
+    --text:#E6EAF0; --muted:#9AA4B2; --accent:#E0A64A;
+    --up:#4FB79E; --down:#E06B78; --t1:#5B9BD5;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); }
+  header { padding:1.2rem 1.6rem; border-bottom:1px solid var(--border); display:flex; align-items:baseline; gap:1rem; }
+  header .brand { font-family:var(--mono); font-weight:700; font-size:1.1rem; }
+  header .brand .d { color:var(--accent); }
+  header .tag { font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+  .wrap { max-width:1000px; margin:0 auto; padding:1.6rem; display:grid; gap:1.2rem; }
+  .controls { display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; }
+  input { background:var(--surface); border:1px solid var(--border); color:var(--text);
+          padding:.55rem .7rem; border-radius:8px; font-family:var(--mono); font-size:.9rem; }
+  input#sym { width:7rem; text-transform:uppercase; }
+  button { background:var(--accent); color:#1a1300; border:none; padding:.55rem 1rem; border-radius:8px;
+           font-weight:700; cursor:pointer; font-family:var(--sans); }
+  button:disabled { opacity:.5; cursor:progress; }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.1rem 1.2rem; }
+  .panel h2 { margin:0 0 .8rem; font-size:.78rem; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); font-family:var(--mono); }
+  canvas { width:100%; height:280px; display:block; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:1.2rem; }
+  @media (max-width:720px){ .grid2 { grid-template-columns:1fr; } }
+  .verdict .dir { font-size:1.6rem; font-weight:800; font-family:var(--mono); }
+  .rationale { color:var(--muted); font-size:.9rem; line-height:1.55; margin-top:.5rem; }
+  table { width:100%; border-collapse:collapse; font-size:.86rem; }
+  td { padding:.4rem 0; border-bottom:1px solid var(--border); }
+  td:last-child { text-align:right; font-family:var(--mono); }
+  .k { color:var(--muted); }
+  .big { font-family:var(--mono); font-size:1.5rem; font-weight:700; color:var(--accent); }
+  .muted { color:var(--muted); font-size:.8rem; }
+  .pill { font-family:var(--mono); font-size:.7rem; padding:.15rem .5rem; border-radius:100px; border:1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand"><span class="d">◆</span> ArthaAI</span>
+  <span class="tag">Tier 1 · Asset Console</span>
+</header>
+<div class="wrap">
+  <div class="controls">
+    <input id="sym" value="GLD" aria-label="symbol" />
+    <input id="tok" value="dev-token" aria-label="bearer token" title="OAuth 2.1 / MCP token" />
+    <button id="go">Analyze</button>
+    <span class="muted" id="status"></span>
+  </div>
+
+  <div class="panel">
+    <h2>Price · candlesticks <span id="last" class="pill"></span></h2>
+    <canvas id="chart" width="960" height="280"></canvas>
+  </div>
+
+  <div class="grid2">
+    <div class="panel verdict">
+      <h2>Master Reasoning LLM</h2>
+      <div class="dir" id="dir">—</div>
+      <div class="muted" id="conf"></div>
+      <div class="rationale" id="rat">Enter a symbol and click Analyze.</div>
+    </div>
+    <div class="panel">
+      <h2>Asset Manager · Kelly sizing</h2>
+      <div class="big" id="alloc">—</div>
+      <div class="muted" id="allocnote"></div>
+      <table id="evidence"></table>
+    </div>
+  </div>
+  <p class="muted">Decision-support only · paper context · not investment advice.</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function drawCandles(bars) {
+  const c = $("chart"), ctx = c.getContext("2d");
+  const W = c.width, H = c.height, pad = 28;
+  ctx.clearRect(0,0,W,H);
+  if (!bars.length) return;
+  const lows = bars.map(b=>b.low), highs = bars.map(b=>b.high);
+  const min = Math.min(...lows), max = Math.max(...highs), range = (max-min)||1;
+  const y = v => pad + (H-2*pad) * (1 - (v-min)/range);
+  const n = bars.length, cw = (W-2*pad)/n;
+  ctx.strokeStyle = "#272E39"; ctx.lineWidth = 1;
+  for (let i=0;i<=4;i++){ const yy=pad+(H-2*pad)*i/4; ctx.beginPath(); ctx.moveTo(pad,yy); ctx.lineTo(W-pad,yy); ctx.stroke(); }
+  bars.forEach((b,i)=>{
+    const x = pad + cw*(i+0.5), up = b.close>=b.open;
+    ctx.strokeStyle = ctx.fillStyle = up ? "#4FB79E" : "#E06B78";
+    ctx.beginPath(); ctx.moveTo(x, y(b.high)); ctx.lineTo(x, y(b.low)); ctx.stroke();
+    const bw = Math.max(1, cw*0.6);
+    const yo = y(b.open), yc = y(b.close);
+    ctx.fillRect(x-bw/2, Math.min(yo,yc), bw, Math.max(1,Math.abs(yc-yo)));
+  });
+}
+
+async function loadChart(sym) {
+  const r = await fetch(`/ohlcv/${sym}?limit=120`);
+  const d = await r.json();
+  drawCandles(d.bars);
+  if (d.bars.length) $("last").textContent = "last " + d.bars[d.bars.length-1].close.toFixed(2);
+}
+
+async function analyze() {
+  const sym = $("sym").value.trim().toUpperCase() || "GLD";
+  const tok = $("tok").value.trim();
+  $("go").disabled = true; $("status").textContent = "running multi-agent pipeline…";
+  try {
+    await loadChart(sym);
+    const r = await fetch(`/analyze/${sym}?skip_ingest=true`, {
+      method:"POST", headers:{ "Authorization":"Bearer "+tok }
+    });
+    if (!r.ok) { $("status").textContent = "error "+r.status+" ("+(r.status===401?"bad token":"see server")+")"; return; }
+    const d = await r.json();
+    const col = {bullish:"#4FB79E", bearish:"#E06B78"}[d.verdict.direction] || "#E0A64A";
+    $("dir").textContent = (d.verdict.direction||"—").toUpperCase(); $("dir").style.color = col;
+    $("conf").textContent = "confidence " + Math.round((d.verdict.confidence||0)*100) + "%  ·  " + (d.verdict.source||"");
+    $("rat").textContent = d.verdict.rationale || "";
+    const a = d.allocation||{};
+    $("alloc").textContent = ((a.final_fraction||0)*100).toFixed(2) + "%";
+    $("allocnote").textContent = (a.capped_by_policy ? "policy-capped · " : "") + (a.rationale||"");
+    const ev = d.evidence||{}, rows = [];
+    if (ev.db && ev.db.available) rows.push(["Technical trend", ev.db.trend+" ("+ev.db.trend_score+")"]);
+    if (ev.quant && ev.quant.available) rows.push(["μ / σ", (ev.quant.mu*100).toFixed(1)+"% / "+(ev.quant.sigma*100).toFixed(1)+"%"]);
+    if (ev.news && ev.news.available) rows.push(["News sentiment", ev.news.label+" ("+ev.news.avg_sentiment+")"]);
+    if (ev.alt && ev.alt.available) rows.push(["Physical/alt", ev.alt.physical_score]);
+    $("evidence").innerHTML = rows.map(r=>`<tr><td class="k">${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+    $("status").textContent = "done";
+  } catch(e) { $("status").textContent = "network error"; }
+  finally { $("go").disabled = false; }
+}
+$("go").addEventListener("click", analyze);
+loadChart($("sym").value).catch(()=>{});
+</script>
+</body>
+</html>

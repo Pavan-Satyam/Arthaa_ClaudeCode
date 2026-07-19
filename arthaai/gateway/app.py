@@ -7,7 +7,10 @@ production this sits behind an mTLS-terminating API gateway (blueprint §6).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -15,6 +18,8 @@ from slowapi.util import get_remote_address
 
 from arthaai import __version__
 from arthaai.gateway.auth import Principal, require_principal
+
+_DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="ArthaAI Gateway", version=__version__, description="Tier 1 secure ingress.")
@@ -33,6 +38,25 @@ class AnalyzeResponse(BaseModel):
     verdict: dict
     allocation: dict
     evidence: dict
+
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard() -> str:
+    """Tier 1 UI — asset page with price, candles, verdict and allocation."""
+    return _DASHBOARD.read_text(encoding="utf-8")
+
+
+@app.get("/ohlcv/{symbol}")
+def ohlcv(symbol: str, limit: int = 120) -> dict:
+    """Recent OHLCV bars for the dashboard candlestick chart (public market data)."""
+    from arthaai.db import timescale
+
+    df = timescale.load_ohlcv(symbol.upper(), limit=limit)
+    bars = [
+        {"ts": str(r.ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
+        for r in df.itertuples(index=False)
+    ]
+    return {"symbol": symbol.upper(), "bars": bars}
 
 
 @app.get("/health")

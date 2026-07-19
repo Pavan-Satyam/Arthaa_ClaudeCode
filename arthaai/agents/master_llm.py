@@ -13,7 +13,6 @@ Either way it emits the same structured verdict, so nothing downstream changes.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 
 from arthaai.config import get_settings
@@ -67,11 +66,14 @@ def _offline(state: dict, symbol: str) -> Verdict:
 
 
 def _claude(state: dict, symbol: str) -> Verdict:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise RuntimeError("no ANTHROPIC_API_KEY")
+    from arthaai.security import vault
+
+    api_key = vault.get_secret("arthaai", "anthropic_api_key", env="ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("no ANTHROPIC_API_KEY (set env or Vault secret arthaai/anthropic_api_key)")
     from anthropic import Anthropic
 
-    client = Anthropic()
+    client = Anthropic(api_key=api_key)
     system = (
         "You are the Master Reasoning LLM of a financial multi-agent system. You do "
         "NOT compute numbers; you synthesise the deterministic evidence provided by "

@@ -1,34 +1,28 @@
-"""Policy-as-code seam (OPA/Rego stand-in) + agent identity (SPIFFE/SPIRE stand-in).
+"""Policy enforcement seam (SPIFFE identity + OPA policy-as-code).
 
-The blueprint evaluates every tool call against an immutable per-agent tool scope
-before it fires. Here we enforce that scope in-process with a static allow-map;
-in production this delegates to an OPA sidecar and the identity is a SPIFFE ID
-bound to a JWT. Least-privilege is expressed by the ALLOWED map (e.g. the data
-agent has no path to execution).
+`authorize_tool` now consults the live OPA server (via security.opa) which
+evaluates policy/arthaai.rego. If OPA is unreachable it falls back to the
+in-process least-privilege map, so enforcement never silently disappears.
+Production identity is a SPIFFE ID bound to a short-lived JWT issued by SPIRE;
+here AgentIdentity carries the SPIFFE ID string.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from arthaai.security import opa
+
+# Re-exported so callers/tests can reference the canonical scope map.
+ALLOWED = opa.ALLOWED
+
 
 @dataclass(frozen=True)
 class AgentIdentity:
     """Stand-in for a SPIFFE ID bound to a short-lived JWT."""
 
-    agent: str          # e.g. "db_agent"
-    spiffe_id: str      # e.g. "spiffe://arthaai/agent/db_agent"
-
-
-# Immutable per-agent tool scope (least privilege). Real deployment = Rego policy.
-ALLOWED: dict[str, set[str]] = {
-    "db_agent": {"sql_query", "load_ohlcv"},
-    "quant_agent": {"load_ohlcv", "compute_stats"},
-    "news_agent": {"hybrid_search"},
-    "alt_agent": {"external_api"},
-    "asset_manager": {"compute_stats", "kelly"},
-    "master_llm": {"llm_complete"},
-}
+    agent: str
+    spiffe_id: str
 
 
 class PolicyViolation(RuntimeError):
@@ -36,10 +30,10 @@ class PolicyViolation(RuntimeError):
 
 
 def authorize_tool(identity: AgentIdentity, tool: str) -> None:
-    """Raise PolicyViolation if `identity` may not invoke `tool`. (OPA seam.)"""
-    scope = ALLOWED.get(identity.agent, set())
-    if tool not in scope:
+    """Raise PolicyViolation if `identity` may not invoke `tool` (OPA-backed)."""
+    if not opa.is_allowed(identity.agent, tool):
+        scope = sorted(ALLOWED.get(identity.agent, set()))
         raise PolicyViolation(
             f"{identity.spiffe_id} is not authorised for tool '{tool}' "
-            f"(scope: {sorted(scope) or 'none'})"
+            f"(scope: {scope or 'none'})"
         )

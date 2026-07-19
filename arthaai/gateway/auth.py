@@ -12,10 +12,11 @@ so the service is runnable locally. Set the env var to require a specific token.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 from fastapi import Header, HTTPException, status
+
+from arthaai.security import vault
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,8 @@ def require_principal(authorization: str | None = Header(default=None)) -> Princ
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = authorization.split(" ", 1)[1].strip()
-    expected = os.environ.get("ARTHAAI_GATEWAY_TOKEN")
+    # Credential comes from Vault (falls back to env if Vault is unavailable).
+    expected = vault.get_secret("arthaai", "gateway_token", env="ARTHAAI_GATEWAY_TOKEN")
     if expected and token != expected:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token.")
     if not token:

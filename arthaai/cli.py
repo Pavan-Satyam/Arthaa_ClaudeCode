@@ -143,8 +143,53 @@ def execute(
 
 
 @app.command()
+def backtest(symbol: str, warmup: int = 60, limit: int = 500) -> None:
+    """Walk-forward backtest with look-ahead guards (offline evaluation)."""
+    from arthaai.backtest import run_backtest
+
+    with console.status(f"[bold]backtesting {symbol.upper()}…"):
+        res = run_backtest(symbol, warmup=warmup, limit=limit)
+    edge = res.total_return - res.buy_hold_return
+    col = "green" if edge > 0 else "red"
+    t = Table(title=f"Backtest · {res.symbol}", show_header=False)
+    t.add_column("k"); t.add_column("v", justify="right")
+    t.add_row("bars / trades", f"{res.bars} / {res.trades}")
+    t.add_row("strategy return", f"{res.total_return:+.2%}")
+    t.add_row("buy & hold", f"{res.buy_hold_return:+.2%}")
+    t.add_row("edge vs B&H", f"[{col}]{edge:+.2%}[/]")
+    t.add_row("Sharpe (ann.)", f"{res.sharpe:.2f}")
+    t.add_row("max drawdown", f"{res.max_drawdown:.2%}")
+    t.add_row("hit rate", f"{res.hit_rate:.1%}")
+    console.print(t)
+    console.print("[dim]Look-ahead-bias guarded: signal at day t only sees bars ≤ t.[/]")
+
+
+@app.command()
+def consume(max_messages: int = 10) -> None:
+    """Consume ingestion events from the Kafka/Redpanda bus (needs `kafka` extra)."""
+    from arthaai.data.consumer import consume as run_consume
+
+    n = run_consume(max_messages=max_messages)
+    console.print(f"consumed [bold]{n}[/] ingest events.")
+
+
+@app.command("seed-secrets")
+def seed_secrets(gateway_token: str = "dev-token") -> None:
+    """Write dev secrets (gateway token, ANTHROPIC_API_KEY if set) into Vault."""
+    import os
+
+    from arthaai.security import vault
+
+    payload = {"gateway_token": gateway_token}
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        payload["anthropic_api_key"] = os.environ["ANTHROPIC_API_KEY"]
+    vault.put_secret("arthaai", payload)
+    console.print(f"stored [bold]{', '.join(payload)}[/] in Vault at secret/arthaai.")
+
+
+@app.command()
 def serve(port: int = 8000) -> None:
-    """Run the Tier 1 FastAPI gateway."""
+    """Run the Tier 1 FastAPI gateway (UI at http://localhost:PORT/)."""
     import uvicorn
 
     uvicorn.run("arthaai.gateway.app:app", host="0.0.0.0", port=port)
