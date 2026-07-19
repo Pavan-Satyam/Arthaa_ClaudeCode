@@ -49,8 +49,7 @@
 </header>
 <div class="wrap">
   <div class="controls">
-    <input id="sym" value="GLD" aria-label="symbol" />
-    <input id="tok" value="dev-token" aria-label="bearer token" title="OAuth 2.1 / MCP token" />
+    <input id="sym" value="GLD" aria-label="symbol" placeholder="symbol" />
     <button id="go">Analyze</button>
     <span class="muted" id="status"></span>
   </div>
@@ -78,6 +77,10 @@
 </div>
 
 <script>
+// Token injected by the gateway that serves this page — the browser session is
+// already trusted, so the user never types a credential. (For a multi-user
+// deployment, replace this with a real login/session.)
+const TOKEN = "__ARTHAAI_TOKEN__";
 const $ = (id) => document.getElementById(id);
 
 function drawCandles(bars) {
@@ -110,7 +113,7 @@ async function loadChart(sym) {
 
 async function analyze() {
   const sym = $("sym").value.trim().toUpperCase() || "GLD";
-  const tok = $("tok").value.trim();
+  const tok = TOKEN;
   $("go").disabled = true; $("status").textContent = "running multi-agent pipeline…";
   try {
     await loadChart(sym);

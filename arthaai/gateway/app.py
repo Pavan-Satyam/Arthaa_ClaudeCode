@@ -42,8 +42,15 @@ class AnalyzeResponse(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> str:
-    """Tier 1 UI — asset page with price, candles, verdict and allocation."""
-    return _DASHBOARD.read_text(encoding="utf-8")
+    """Tier 1 UI — asset page with price, candles, verdict and allocation.
+
+    The gateway injects a valid bearer token into the page it serves, so the
+    browser session is trusted without the user handling a credential.
+    """
+    from arthaai.security import vault
+
+    token = vault.get_secret("arthaai", "gateway_token", env="ARTHAAI_GATEWAY_TOKEN") or "dev-token"
+    return _DASHBOARD.read_text(encoding="utf-8").replace("__ARTHAAI_TOKEN__", token)
 
 
 @app.get("/ohlcv/{symbol}")
