@@ -52,6 +52,32 @@ def seed_news() -> None:
 
 
 @app.command()
+def universe(
+    action: str = typer.Argument("sync", help="sync | count | search"),
+    query: str = typer.Argument("", help="text for search"),
+) -> None:
+    """Register every US-listed symbol (catalog only; prices load on demand)."""
+    from arthaai.data import universe as uni
+
+    if action == "sync":
+        with console.status("[bold]fetching NASDAQ symbol directory…"):
+            n = uni.sync()
+        console.print(f"processed [bold]{n}[/] listed symbols · catalog now holds [bold]{uni.count()}[/] assets.")
+    elif action == "count":
+        console.print(f"catalog holds [bold]{uni.count()}[/] assets.")
+    elif action == "search":
+        rows = uni.search(query)
+        t = Table(show_header=True, header_style="bold")
+        t.add_column("Symbol"); t.add_column("Name"); t.add_column("Type")
+        for r in rows:
+            t.add_row(r["symbol"], r["name"], r["asset_class"])
+        console.print(t)
+    else:
+        console.print("[red]action must be: sync | count | search[/]")
+        raise typer.Exit(1)
+
+
+@app.command()
 def ingest(symbol: str, days: int = 730) -> None:
     """Pull OHLCV for SYMBOL into TimescaleDB."""
     from arthaai.data import ingest as ingest_mod
