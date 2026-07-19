@@ -181,8 +181,13 @@ def seed_secrets(gateway_token: str = "dev-token") -> None:
     from arthaai.security import vault
 
     payload = {"gateway_token": gateway_token}
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        payload["anthropic_api_key"] = os.environ["ANTHROPIC_API_KEY"]
+    for env, secret in (
+        ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+        ("GEMINI_API_KEY", "gemini_api_key"),
+        ("ARTHAAI_LOCAL_API_KEY", "local_api_key"),
+    ):
+        if os.environ.get(env):
+            payload[secret] = os.environ[env]
     vault.put_secret("arthaai", payload)
     console.print(f"stored [bold]{', '.join(payload)}[/] in Vault at secret/arthaai.")
 

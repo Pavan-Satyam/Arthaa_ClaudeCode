@@ -61,9 +61,21 @@ arthaai serve
 curl -X POST "localhost:8000/analyze/GLD" -H "Authorization: Bearer dev-token"
 ```
 
-No `ANTHROPIC_API_KEY`? The Master LLM **falls back to a deterministic offline
-reasoner** — the same resilience pattern the blueprint uses (fallback to an
-internally-hosted model). Add the key to get real Claude synthesis.
+### Choose your LLM (Claude · Gemini · local · offline)
+
+The Master Reasoning LLM is provider-agnostic with a **fallback chain** — set
+`ARTHAAI_LLM_CHAIN` and it tries each in order, always ending at the deterministic
+offline reasoner so a verdict is guaranteed:
+
+| Want | Set in `.env` |
+|---|---|
+| **Google Gemini**, fall back to local | `ARTHAAI_LLM_CHAIN=gemini,local,offline` + `GEMINI_API_KEY=…` |
+| **Local model only** (Ollama/LM Studio/vLLM) | `ARTHAAI_LLM_CHAIN=local,offline` + `ARTHAAI_LOCAL_MODEL=llama3.1` |
+| **Claude**, fall back to Gemini | `ARTHAAI_LLM_CHAIN=anthropic,gemini,offline` |
+| Nothing configured | offline deterministic reasoner (runs with no key) |
+
+- **Local** hits any OpenAI-compatible endpoint. With Ollama: `ollama serve && ollama pull llama3.1` — the default `ARTHAAI_LOCAL_BASE_URL` already points at it. A local model is the blueprint's *"internally-hosted open-weight model"* — zero external dependency or data egress.
+- Keys can live in **Vault** (`arthaai seed-secrets` picks up `GEMINI_API_KEY` etc.) or plain env. The `verdict.source` field tells you which provider actually answered (`gemini`, `local:llama3.1`, `claude`, or `offline-fallback`).
 
 ## Blueprint → code → status
 
