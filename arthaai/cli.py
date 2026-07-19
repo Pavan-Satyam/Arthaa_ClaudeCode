@@ -91,11 +91,18 @@ def analyze(symbol: str, skip_ingest: bool = typer.Option(False, help="Use exist
     """Run the full multi-agent analysis pipeline for SYMBOL."""
     from arthaai.orchestration import analyze as run_analyze
 
-    symbol = symbol.upper()
+    symbol = symbol.strip().strip(".").upper()  # tolerate stray dots/spaces
     with console.status(f"[bold]running multi-agent pipeline for {symbol}…"):
         state = run_analyze(symbol, skip_ingest=skip_ingest)
 
     db, quant = state.get("db", {}), state.get("quant", {})
+    if not db.get("available"):
+        console.print(
+            f"[yellow]No market data for '{symbol}'.[/] "
+            "Check the ticker (e.g. RDW not .RDW), or it may have no history on the data source."
+        )
+        raise typer.Exit(1)
+
     news, alt = state.get("news", {}), state.get("alt", {})
     verdict, alloc = state.get("verdict", {}), state.get("allocation", {})
 
