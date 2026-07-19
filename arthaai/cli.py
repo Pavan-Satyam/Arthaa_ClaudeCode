@@ -192,6 +192,24 @@ def seed_secrets(gateway_token: str = "dev-token") -> None:
     console.print(f"stored [bold]{', '.join(payload)}[/] in Vault at secret/arthaai.")
 
 
+@app.command("llm-status")
+def llm_status() -> None:
+    """Probe the configured LLM chain and show which providers are reachable."""
+    from arthaai.agents.master_llm import provider_status
+
+    rows = provider_status()
+    t = Table(title="LLM provider chain", show_header=True, header_style="bold")
+    t.add_column("#"); t.add_column("Provider"); t.add_column("Status"); t.add_column("Detail")
+    active = None
+    for i, r in enumerate(rows, 1):
+        mark = "[green]● up[/]" if r["ok"] else "[red]○ down[/]"
+        if r["ok"] and active is None:
+            active = r["provider"]
+        t.add_row(str(i), r["provider"], mark, r["detail"])
+    console.print(t)
+    console.print(f"[bold]→ analyze will use:[/] [green]{active or 'offline'}[/]  (first reachable in the chain)")
+
+
 @app.command()
 def serve(port: int = 8000) -> None:
     """Run the Tier 1 FastAPI gateway (UI at http://localhost:PORT/)."""

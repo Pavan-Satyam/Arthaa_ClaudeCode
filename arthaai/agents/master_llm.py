@@ -167,6 +167,44 @@ def _offline(state: dict, symbol: str) -> Verdict:
 _PROVIDERS = {"anthropic": _anthropic, "gemini": _gemini, "local": _local, "offline": _offline}
 
 
+def provider_status() -> list[dict]:
+    """Probe each provider in the configured chain; report reachability."""
+    s = get_settings()
+    out: list[dict] = []
+    for name in s.llm_chain_list:
+        if name == "offline":
+            out.append({"provider": "offline", "ok": True, "detail": "deterministic reasoner (always available)"})
+        elif name == "anthropic":
+            key = vault.get_secret("arthaai", "anthropic_api_key", env="ANTHROPIC_API_KEY")
+            out.append({"provider": "anthropic", "ok": bool(key),
+                        "detail": f"key present · model {s.llm_model}" if key else "no ANTHROPIC_API_KEY"})
+        elif name == "gemini":
+            key = vault.get_secret("arthaai", "gemini_api_key", env="GEMINI_API_KEY")
+            if not key:
+                out.append({"provider": "gemini", "ok": False, "detail": "no GEMINI_API_KEY"})
+            else:
+                try:
+                    r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models",
+                                  params={"key": key}, timeout=8.0)
+                    r.raise_for_status()
+                    out.append({"provider": "gemini", "ok": True, "detail": f"reachable · model {s.gemini_model}"})
+                except Exception as exc:  # noqa: BLE001
+                    out.append({"provider": "gemini", "ok": False, "detail": f"key set but call failed: {exc}"})
+        elif name == "local":
+            try:
+                r = httpx.get(f"{s.local_base_url.rstrip('/')}/models", timeout=5.0)
+                r.raise_for_status()
+                models = [m.get("id") for m in r.json().get("data", [])]
+                have = s.local_model in models
+                detail = f"server up · model '{s.local_model}' " + (
+                    "loaded" if have else f"NOT pulled (run: ollama pull {s.local_model})")
+                out.append({"provider": "local", "ok": have, "detail": detail})
+            except Exception as exc:  # noqa: BLE001
+                out.append({"provider": "local", "ok": False,
+                            "detail": f"no server at {s.local_base_url} ({type(exc).__name__})"})
+    return out
+
+
 def reason(state: dict, symbol: str) -> Verdict:
     authorize_tool(IDENTITY, "llm_complete")
     for name in get_settings().llm_chain_list:
