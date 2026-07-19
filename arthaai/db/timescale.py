@@ -29,6 +29,22 @@ def ping() -> str:
         return row[0] if row else "NOT INSTALLED"
 
 
+def ensure_asset(symbol: str, name: str | None = None, asset_class: str = "equity") -> None:
+    """Register an asset if it isn't already known, so OHLCV can reference it.
+
+    Lets the platform analyse any ticker, not just the seeded universe. The FK on
+    ohlcv(symbol) -> assets(symbol) requires this row to exist first.
+    """
+    symbol = symbol.upper()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO assets (symbol, name, asset_class) VALUES (%s, %s, %s) "
+            "ON CONFLICT (symbol) DO NOTHING;",
+            (symbol, name or symbol, asset_class),
+        )
+        conn.commit()
+
+
 def upsert_ohlcv(symbol: str, interval: str, rows: pd.DataFrame) -> int:
     """Insert/update OHLCV bars. `rows` has columns ts, open, high, low, close, volume."""
     if rows.empty:

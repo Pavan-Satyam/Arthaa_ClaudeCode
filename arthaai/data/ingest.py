@@ -44,9 +44,29 @@ def _publish_event(symbol: str, n: int) -> None:
         pass
 
 
+def _friendly_meta(symbol: str) -> tuple[str, str]:
+    """Best-effort human name + asset class from yfinance; falls back to the symbol."""
+    try:
+        import yfinance as yf
+
+        info = yf.Ticker(symbol).info
+        name = info.get("shortName") or info.get("longName") or symbol
+        quote = (info.get("quoteType") or "").upper()
+        asset_class = "etf" if quote == "ETF" else "equity"
+        return name, asset_class
+    except Exception:  # noqa: BLE001 - enrichment is optional
+        return symbol, "equity"
+
+
 def ingest(symbol: str, lookback_days: int = 730, interval: str = "1d") -> int:
-    """Fetch and persist bars for `symbol`. Returns rows written."""
+    """Fetch and persist bars for `symbol`. Returns rows written.
+
+    Auto-registers the asset first so any ticker can be analysed, not just the
+    seeded universe.
+    """
     symbol = symbol.upper()
+    name, asset_class = _friendly_meta(symbol)
+    timescale.ensure_asset(symbol, name=name, asset_class=asset_class)
     start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     df = _download(symbol, start, interval)
     written = timescale.upsert_ohlcv(symbol, interval, df)
