@@ -5,7 +5,13 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load .env into the process environment so unprefixed secrets used by third-party
+# SDKs and Vault fallbacks (ANTHROPIC_API_KEY, GEMINI_API_KEY, ...) are available.
+# pydantic-settings only reads ARTHAAI_-prefixed vars, so this fills the gap.
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -41,7 +47,7 @@ class Settings(BaseSettings):
     # Explicit ordered chain, e.g. "gemini,local,offline". Empty -> [provider, offline].
     llm_chain: str = ""
     llm_model: str = "claude-sonnet-5"       # anthropic model
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.5-flash"
     local_base_url: str = "http://localhost:11434/v1"   # Ollama's OpenAI-compatible API
     local_model: str = "llama3.1"
     aws_region: str = "us-east-1"

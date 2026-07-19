@@ -25,6 +25,10 @@ seed:   ## Seed illustrative news into Qdrant
 	$(PY) -m arthaai.cli seed-news
 analyze: ## Analyze a symbol:  make analyze SYM=GLD
 	$(PY) -m arthaai.cli analyze $(SYM)
+llm-status: ## Show which LLM providers are reachable
+	$(PY) -m arthaai.cli llm-status
+backtest: ## Backtest a symbol:  make backtest SYM=GLD
+	$(PY) -m arthaai.cli backtest $(SYM)
 serve:  ## Run the Tier 1 FastAPI gateway on :8000
 	$(PYARCH) .venv/bin/uvicorn arthaai.gateway.app:app --reload --port 8000
 test:   ## Run the test suite

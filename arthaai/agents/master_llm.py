@@ -96,9 +96,16 @@ def _gemini(state: dict, symbol: str) -> Verdict:
     body = {
         "system_instruction": {"parts": [{"text": SYSTEM}]},
         "contents": [{"parts": [{"text": _prompt(state, symbol)}]}],
-        "generationConfig": {"maxOutputTokens": 700, "responseMimeType": "application/json"},
+        "generationConfig": {
+            "maxOutputTokens": 1024,
+            "responseMimeType": "application/json",
+            # 2.5+ are "thinking" models; without this they spend the token budget on
+            # reasoning and truncate the JSON answer. 0 = answer directly.
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
-    resp = httpx.post(url, params={"key": key}, json=body, timeout=30.0)
+    # Key goes in a header, never the URL — so it can't leak into logs/tracebacks.
+    resp = httpx.post(url, headers={"x-goog-api-key": key}, json=body, timeout=30.0)
     resp.raise_for_status()
     text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     return _parse_verdict(text, "gemini")
@@ -185,7 +192,7 @@ def provider_status() -> list[dict]:
             else:
                 try:
                     r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models",
-                                  params={"key": key}, timeout=8.0)
+                                  headers={"x-goog-api-key": key}, timeout=8.0)
                     r.raise_for_status()
                     out.append({"provider": "gemini", "ok": True, "detail": f"reachable · model {s.gemini_model}"})
                 except Exception as exc:  # noqa: BLE001
