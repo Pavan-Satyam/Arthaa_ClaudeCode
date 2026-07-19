@@ -55,10 +55,15 @@ def dashboard() -> str:
 
 @app.get("/ohlcv/{symbol}")
 def ohlcv(symbol: str, limit: int = 120) -> dict:
-    """Recent OHLCV bars for the dashboard candlestick chart (public market data)."""
+    """Recent OHLCV bars for the dashboard chart; ingests on demand if missing."""
+    from arthaai.data import ingest as ingest_mod
     from arthaai.db import timescale
 
-    df = timescale.load_ohlcv(symbol.upper(), limit=limit)
+    symbol = symbol.strip().strip(".").upper()
+    df = timescale.load_ohlcv(symbol, limit=limit)
+    if df.empty:
+        ingest_mod.ingest(symbol)
+        df = timescale.load_ohlcv(symbol, limit=limit)
     bars = [
         {"ts": str(r.ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
         for r in df.itertuples(index=False)

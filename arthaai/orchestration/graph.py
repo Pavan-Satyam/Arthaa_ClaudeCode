@@ -81,6 +81,6 @@ def build_graph():
 def analyze(symbol: str, *, skip_ingest: bool = False) -> dict:
     """Run the full pipeline for `symbol` and return the final GraphState."""
     graph = build_graph()
-    initial: GraphState = {"symbol": symbol.upper(), "skip_ingest": skip_ingest}
+    initial: GraphState = {"symbol": symbol.strip().strip(".").upper(), "skip_ingest": skip_ingest}
     result = graph.invoke(initial)
     return dict(result)

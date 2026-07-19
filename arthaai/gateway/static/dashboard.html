@@ -112,16 +112,26 @@ async function loadChart(sym) {
 }
 
 async function analyze() {
-  const sym = $("sym").value.trim().toUpperCase() || "GLD";
+  const sym = $("sym").value.trim().replace(/^\.+/, "").toUpperCase() || "GLD";
   const tok = TOKEN;
-  $("go").disabled = true; $("status").textContent = "running multi-agent pipeline…";
+  $("go").disabled = true; $("status").textContent = "running multi-agent pipeline… (fetching data)";
   try {
-    await loadChart(sym);
-    const r = await fetch(`/analyze/${sym}?skip_ingest=true`, {
+    // no skip_ingest: fetch data on demand so any ticker works from the UI
+    const r = await fetch(`/analyze/${sym}`, {
       method:"POST", headers:{ "Authorization":"Bearer "+tok }
     });
     if (!r.ok) { $("status").textContent = "error "+r.status+" ("+(r.status===401?"bad token":"see server")+")"; return; }
     const d = await r.json();
+    const hasData = d.evidence && d.evidence.db && d.evidence.db.available;
+    if (!hasData) {
+      $("dir").textContent = "—"; $("dir").style.color = "var(--muted)";
+      $("conf").textContent = ""; $("alloc").textContent = "—"; $("allocnote").textContent = "";
+      $("evidence").innerHTML = ""; $("last").textContent = "";
+      $("rat").textContent = `No market data for "${sym}" — check the ticker symbol (it may be delisted or invalid).`;
+      $("status").textContent = "no data";
+      return;
+    }
+    await loadChart(sym);
     const col = {bullish:"#4FB79E", bearish:"#E06B78"}[d.verdict.direction] || "#E0A64A";
     $("dir").textContent = (d.verdict.direction||"—").toUpperCase(); $("dir").style.color = col;
     $("conf").textContent = "confidence " + Math.round((d.verdict.confidence||0)*100) + "%  ·  " + (d.verdict.source||"");
