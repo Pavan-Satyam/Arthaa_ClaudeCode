@@ -1,0 +1,54 @@
+# ArthaAI local stack.
+#   Tier 2 persistence:  TimescaleDB (quant) + Qdrant (narrative RAG)
+#   Tier 2 event bus:    Redpanda (Kafka-compatible) — decouples ingestion producers/consumers
+# Usage: docker compose up -d
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: arthaai-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ARTHAAI_TIMESCALE_DB:-arthaai}
+      POSTGRES_USER: ${ARTHAAI_TIMESCALE_USER:-arthaai}
+      POSTGRES_PASSWORD: ${ARTHAAI_TIMESCALE_PASSWORD:-arthaai_dev_pw}
+    ports:
+      - "${ARTHAAI_TIMESCALE_PORT:-5432}:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./arthaai/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ARTHAAI_TIMESCALE_USER:-arthaai} -d ${ARTHAAI_TIMESCALE_DB:-arthaai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: arthaai-qdrant
+    restart: unless-stopped
+    ports:
+      - "${ARTHAAI_QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # Kafka-compatible event bus (Redpanda: single binary, no Zookeeper — light for local dev).
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: arthaai-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://localhost:9092
+    ports:
+      - "${ARTHAAI_KAFKA_PORT:-9092}:9092"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+
+volumes:
+  timescale_data:
+  qdrant_data:
+  redpanda_data:

@@ -1,0 +1,639 @@
+<style>
+  :root {
+    color-scheme: light dark;
+    /* light (default) — cool paper + brass */
+    --bg: #F3F4F6;
+    --surface: #FFFFFF;
+    --surface-2: #FAFAF9;
+    --border: #E3E6EB;
+    --border-strong: #CFD4DC;
+    --text: #191E26;
+    --muted: #59626F;
+    --faint: #8A93A1;
+    --accent: #8A5E15;
+    --accent-bright: #B4832A;
+    --accent-soft: rgba(180,131,42,.12);
+    --ring: rgba(180,131,42,.40);
+    /* tier hues */
+    --t1: #2F6FB0;   /* ingress   */
+    --t2: #A2761F;   /* core      */
+    --t3: #2C7D6C;   /* oversight */
+    --t4: #B23A48;   /* execution */
+    /* semantic */
+    --ok: #2E7D50;
+    --warn: #B0810F;
+    --crit: #B23A48;
+    --shadow: 0 1px 2px rgba(16,20,28,.04), 0 8px 24px rgba(16,20,28,.05);
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --measure: 68ch;
+    --step--1: .8125rem;
+    --step-0: 1.0625rem;
+    --step-1: 1.2rem;
+    --step-2: clamp(1.4rem, 1.1rem + 1.2vw, 1.85rem);
+    --step-3: clamp(2.1rem, 1.5rem + 2.6vw, 3.4rem);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0D1015;
+      --surface: #14181F;
+      --surface-2: #1A1F28;
+      --border: #272E39;
+      --border-strong: #333B48;
+      --text: #E6EAF0;
+      --muted: #9AA4B2;
+      --faint: #667082;
+      --accent: #E0A64A;
+      --accent-bright: #F1BE68;
+      --accent-soft: rgba(224,166,74,.11);
+      --ring: rgba(224,166,74,.38);
+      --t1: #5B9BD5;
+      --t2: #E0A64A;
+      --t3: #4FB79E;
+      --t4: #E06B78;
+      --ok: #56C08A;
+      --warn: #E0A64A;
+      --crit: #E06B78;
+      --shadow: 0 1px 2px rgba(0,0,0,.30), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  /* explicit toggle overrides (must win in both directions) */
+  :root[data-theme="light"] {
+    --bg:#F3F4F6; --surface:#FFFFFF; --surface-2:#FAFAF9; --border:#E3E6EB; --border-strong:#CFD4DC;
+    --text:#191E26; --muted:#59626F; --faint:#8A93A1;
+    --accent:#8A5E15; --accent-bright:#B4832A; --accent-soft:rgba(180,131,42,.12); --ring:rgba(180,131,42,.40);
+    --t1:#2F6FB0; --t2:#A2761F; --t3:#2C7D6C; --t4:#B23A48; --ok:#2E7D50; --warn:#B0810F; --crit:#B23A48;
+    --shadow:0 1px 2px rgba(16,20,28,.04),0 8px 24px rgba(16,20,28,.05);
+  }
+  :root[data-theme="dark"] {
+    --bg:#0D1015; --surface:#14181F; --surface-2:#1A1F28; --border:#272E39; --border-strong:#333B48;
+    --text:#E6EAF0; --muted:#9AA4B2; --faint:#667082;
+    --accent:#E0A64A; --accent-bright:#F1BE68; --accent-soft:rgba(224,166,74,.11); --ring:rgba(224,166,74,.38);
+    --t1:#5B9BD5; --t2:#E0A64A; --t3:#4FB79E; --t4:#E06B78; --ok:#56C08A; --warn:#E0A64A; --crit:#E06B78;
+    --shadow:0 1px 2px rgba(0,0,0,.30),0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--step-0);
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: inherit; }
+  h1, h2, h3 { text-wrap: balance; letter-spacing: -0.02em; line-height: 1.12; }
+
+  .mono { font-family: var(--font-mono); }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ---------- shell ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    padding: 2.4rem 1.4rem 2rem 1.6rem;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: .1rem;
+  }
+  .toc .brandmark {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -.01em;
+    margin-bottom: 1.5rem;
+    display: flex; align-items: center; gap: .5rem;
+  }
+  .toc .brandmark .dot { color: var(--accent); }
+  .toc a {
+    text-decoration: none;
+    color: var(--muted);
+    font-size: .875rem;
+    padding: .34rem .55rem;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+    display: flex; gap: .55rem; align-items: baseline;
+    transition: color .15s, background .15s, border-color .15s;
+  }
+  .toc a .n { font-family: var(--font-mono); font-size: .72rem; color: var(--faint); min-width: 1.1em; }
+  .toc a:hover { color: var(--text); background: var(--accent-soft); }
+  .toc a.active { color: var(--text); border-left-color: var(--accent); background: var(--accent-soft); }
+  .toc a.active .n { color: var(--accent); }
+
+  main { min-width: 0; padding: 0 clamp(1.2rem, 4vw, 3.4rem) 6rem; }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    padding: 3.4rem 0 2.2rem;
+    border-bottom: 1px solid var(--border);
+    animation: rise .6s cubic-bezier(.2,.7,.3,1) both;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .masthead { animation: none; } * { scroll-behavior: auto !important; } }
+  .masthead h1 {
+    font-size: var(--step-3);
+    font-weight: 800;
+    margin: .6rem 0 .5rem;
+  }
+  .masthead h1 .ai { color: var(--accent); }
+  .masthead .lede {
+    font-size: 1.15rem;
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0 0 1.6rem;
+    line-height: 1.55;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .chip {
+    font-family: var(--font-mono);
+    font-size: .74rem;
+    letter-spacing: .04em;
+    padding: .34rem .6rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 100px;
+    color: var(--muted);
+    background: var(--surface);
+    display: inline-flex; gap: .4rem; align-items: center;
+  }
+  .chip b { color: var(--text); font-weight: 700; }
+  .chip .sq { width: .5rem; height: .5rem; border-radius: 2px; background: var(--accent); }
+
+  /* ---------- sections ---------- */
+  section { padding: 3rem 0 1rem; border-bottom: 1px solid var(--border); scroll-margin-top: 1.5rem; }
+  section:last-of-type { border-bottom: none; }
+  .sec-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: 1.1rem; }
+  .sec-head .num { font-family: var(--font-mono); font-size: .8rem; color: var(--accent); font-weight: 600; padding-top: .35rem; }
+  section h2 { font-size: var(--step-2); font-weight: 750; margin: 0; }
+  .prose { max-width: var(--measure); }
+  .prose p { margin: 0 0 1.05rem; color: var(--text); }
+  .prose p.dim { color: var(--muted); }
+  .prose strong { font-weight: 680; }
+  .prose .term { font-family: var(--font-mono); font-size: .92em; color: var(--accent); background: var(--accent-soft); padding: .06em .34em; border-radius: 4px; }
+
+  /* ---------- tier legend ---------- */
+  .tierbar { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1.4rem 0 0; }
+  .tiertag {
+    font-family: var(--font-mono); font-size: .74rem; letter-spacing: .03em;
+    padding: .3rem .6rem; border-radius: 6px; display: inline-flex; gap: .45rem; align-items: center;
+    border: 1px solid var(--border-strong); background: var(--surface);
+  }
+  .tiertag i { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block; }
+  .t1 i, .rail-t1 { background: var(--t1); } .t2 i { background: var(--t2); }
+  .t3 i { background: var(--t3); } .t4 i { background: var(--t4); }
+
+  /* ---------- schematic (committed dark panel) ---------- */
+  .schematic {
+    margin: 1.6rem 0 .5rem;
+    background: #0D1015;
+    border: 1px solid #272E39;
+    border-radius: 12px;
+    padding: 1.4rem 1rem;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .schematic .cap {
+    font-family: var(--font-mono); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase;
+    color: #667082; padding: 0 .4rem .9rem; display: block;
+  }
+  .mermaid { display: flex; justify-content: center; min-width: 620px; }
+
+  /* ---------- cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr)); gap: 1rem; margin: 1.5rem 0 .5rem; }
+  .card {
+    border: 1px solid var(--border); border-left: 3px solid var(--rail, var(--accent));
+    border-radius: 10px; background: var(--surface); padding: 1.1rem 1.15rem; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: .5rem;
+  }
+  .card .codename { font-family: var(--font-mono); font-weight: 700; font-size: 1.02rem; letter-spacing: -.01em; }
+  .card .role { color: var(--muted); font-size: .93rem; line-height: 1.5; margin: 0; }
+  .card dl { margin: .35rem 0 0; display: grid; grid-template-columns: auto 1fr; gap: .3rem .8rem; font-size: .82rem; }
+  .card dt { font-family: var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .04em; font-size: .7rem; padding-top: .12rem; }
+  .card dd { margin: 0; color: var(--text); }
+  .card dd .pill { font-family: var(--font-mono); font-size: .74rem; }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow-x: auto; margin: 1.4rem 0 .4rem; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: .9rem; background: var(--surface); }
+  caption { text-align: left; font-family: var(--font-mono); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding: .8rem 1rem .2rem; }
+  th, td { text-align: left; padding: .72rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  thead th { font-size: .72rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  td .name { font-family: var(--font-mono); font-weight: 650; color: var(--text); }
+  tbody tr.hi td { background: var(--accent-soft); }
+  tbody tr.hi td .name { color: var(--accent); }
+
+  /* ---------- circuit breaker ---------- */
+  .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .9rem; margin: 1.4rem 0 .5rem; }
+  .state { border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.1rem; background: var(--surface); border-top: 3px solid var(--sc); box-shadow: var(--shadow); }
+  .state .lab { font-family: var(--font-mono); font-weight: 700; letter-spacing: .04em; color: var(--sc); display: flex; align-items: center; gap: .5rem; }
+  .state .lab .led { width: .6rem; height: .6rem; border-radius: 50%; background: var(--sc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc) 22%, transparent); }
+  .state p { margin: .6rem 0 0; font-size: .88rem; color: var(--muted); line-height: 1.5; }
+  .state.closed { --sc: var(--ok); } .state.open { --sc: var(--crit); } .state.half { --sc: var(--warn); }
+
+  /* ---------- formula ---------- */
+  .formula { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem 1.25rem; margin: 1.1rem 0; }
+  .formula .fn { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
+  .formula .eq { font-family: var(--font-mono); font-size: 1.4rem; margin: .5rem 0 .7rem; color: var(--text); font-weight: 600; }
+  .formula .eq sup, .formula .eq sub { font-size: .62em; }
+  .formula .where { font-size: .84rem; color: var(--muted); line-height: 1.6; margin: 0; }
+  .formula .where b { font-family: var(--font-mono); color: var(--text); font-weight: 650; }
+
+  /* ---------- sprint roadmap ---------- */
+  .sprints { display: flex; flex-direction: column; gap: 0; margin: 1.4rem 0 .5rem; counter-reset: sp; }
+  .sprint { display: grid; grid-template-columns: 3rem 1fr; gap: 1rem; padding: 1.15rem 0; border-top: 1px solid var(--border); }
+  .sprint:first-child { border-top: none; }
+  .sprint .idx { font-family: var(--font-mono); font-weight: 700; color: var(--accent); font-size: 1.05rem; }
+  .sprint .idx .k { display: block; font-size: .62rem; letter-spacing: .12em; color: var(--faint); font-weight: 600; }
+  .sprint h3 { font-size: 1.05rem; margin: 0 0 .35rem; font-weight: 700; letter-spacing: -.01em; }
+  .sprint p { margin: 0; color: var(--muted); font-size: .92rem; line-height: 1.55; }
+
+  /* ---------- callout ---------- */
+  .callout { border: 1px solid var(--border-strong); border-left: 3px solid var(--accent); background: var(--surface); border-radius: 8px; padding: 1rem 1.15rem; margin: 1.3rem 0; max-width: var(--measure); }
+  .callout .k { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
+  .callout p { margin: .4rem 0 0; font-size: .95rem; color: var(--text); }
+
+  footer { padding: 2.6rem 0 1rem; color: var(--faint); font-size: .82rem; font-family: var(--font-mono); max-width: var(--measure); }
+  footer .rule { height: 1px; background: var(--border); margin-bottom: 1.4rem; }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    .toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border);
+           flex-direction: row; flex-wrap: wrap; gap: .3rem; padding: 1rem 1.2rem; }
+    .toc .brandmark { width: 100%; margin-bottom: .6rem; }
+    .toc a { border-left: none; border-bottom: 2px solid transparent; padding: .3rem .5rem; }
+    .toc a.active { border-left-color: transparent; border-bottom-color: var(--accent); }
+    .toc a .n { display: none; }
+    main { padding: 0 1.3rem 4rem; }
+  }
+</style>
+
+<div class="shell">
+  <nav class="toc" aria-label="Contents">
+    <div class="brandmark"><span class="dot">◆</span> ArthaAI</div>
+    <a href="#overview"><span class="n">01</span> Architectural Vision</a>
+    <a href="#topology"><span class="n">02</span> System Topology</a>
+    <a href="#orchestration"><span class="n">03</span> Orchestration &amp; Control</a>
+    <a href="#agents"><span class="n">04</span> Specialised Agents</a>
+    <a href="#brain"><span class="n">05</span> Master Reasoning LLM</a>
+    <a href="#security"><span class="n">06</span> Zero-Trust Security</a>
+    <a href="#data"><span class="n">07</span> Data Persistence</a>
+    <a href="#resiliency"><span class="n">08</span> Resiliency</a>
+    <a href="#allocation"><span class="n">09</span> Capital Allocation</a>
+    <a href="#roadmap"><span class="n">10</span> Deployment Roadmap</a>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <span class="eyebrow">Production Blueprint · System Architecture &amp; Onboarding</span>
+      <h1>Artha<span class="ai">AI</span></h1>
+      <p class="lede">A next-generation asset-analysis and prediction platform for high-frequency evaluation of equities and physical commodities — built on a decoupled, zero-trust multi-agent LLM framework.</p>
+      <div class="chips">
+        <span class="chip"><span class="sq"></span><b>4</b> operational tiers</span>
+        <span class="chip"><b>6</b> specialised agents</span>
+        <span class="chip"><b>5</b> deployment sprints</span>
+        <span class="chip">Zero-trust · CSA framework</span>
+        <span class="chip">LangGraph · MCP · Kafka</span>
+      </div>
+    </header>
+
+    <!-- 01 -->
+    <section id="overview">
+      <div class="sec-head"><span class="num">01</span><h2>Architectural Vision &amp; Paradigm Shift</h2></div>
+      <div class="prose">
+        <p>The deployment of advanced financial intelligence demands a fundamental departure from monolithic application designs and linear processing pipelines. ArthaAI operates at the intersection of quantitative finance and generative AI, processing heterogeneous datasets — from high-velocity market tick data to unstructured geopolitical sentiment and satellite-derived alternative intelligence.</p>
+        <p>The core philosophy relies on a highly decoupled, multi-agent Large Language Model framework. Single-agent systems, while simpler to build, rapidly suffer from context degradation, catastrophic forgetting, and unmanageable prompt complexity at scale. To resolve the unpredictability of probabilistic LLMs inside a deterministic financial environment, ArthaAI isolates reasoning into specialised sub-agents, orchestrated by a macro-level directed graph that maintains a unified global state.</p>
+        <p class="dim">Because autonomous agents with financial-data access and external API execution represent an unprecedented expansion of the attack surface, the entire ecosystem is bounded by a strict zero-trust security paradigm: cryptographic identity attribution for every action, authorization enforced at the database layer, secrets held in secure vaults, and resilience against external failures through circuit-breaker topologies. Finally, the platform articulates <em>why</em> a prediction was made before an Asset Manager module determines capital allocation using risk-constrained continuous compounding.</p>
+      </div>
+    </section>
+
+    <!-- 02 -->
+    <section id="topology">
+      <div class="sec-head"><span class="num">02</span><h2>End-to-End System Topology</h2></div>
+      <div class="prose">
+        <p>The architecture is stratified into four operational tiers, moving from client ingress down to secure trade execution. A request originates in a conventional brokerage interface, traverses the Tier&nbsp;1 secure gateway via MCP Authentication over OAuth&nbsp;2.1, and is intercepted by the Tier&nbsp;2 macro-orchestrator, which uses a Kafka event bus to asynchronously distribute work across the decoupled agent network.</p>
+      </div>
+      <div class="tierbar">
+        <span class="tiertag t1"><i></i> Tier 1 · Client &amp; Interface</span>
+        <span class="tiertag t2"><i></i> Tier 2 · Orchestration &amp; Security</span>
+        <span class="tiertag t3"><i></i> Tier 3 · Oversight &amp; Asset Mgmt</span>
+        <span class="tiertag t4"><i></i> Tier 4 · Execution</span>
+      </div>
+      <div class="schematic">
+        <span class="cap">Macro information pipeline — client ingress to trade execution</span>
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','fontSize':'13px','lineColor':'#6B7686','primaryColor':'#1A1F28','primaryTextColor':'#E6EAF0','primaryBorderColor':'#333B48','clusterBkg':'transparent'}}}%%
+flowchart TD
+  classDef t1 fill:#122336,stroke:#5B9BD5,color:#cfe0f2;
+  classDef t2 fill:#2a2210,stroke:#E0A64A,color:#f2dcae;
+  classDef t3 fill:#0f2a24,stroke:#4FB79E,color:#c3ece0;
+  classDef t4 fill:#2e1417,stroke:#E06B78,color:#f3c9ce;
+  classDef store fill:#152820,stroke:#4FB79E,color:#cde9d9;
+
+  U[User / Investor]:::t1 --> UI["Asset UI<br/>price · candles · PnL"]:::t1
+  UI -->|Analyze| API["API Gateway<br/>MCP Auth · OAuth 2.1"]:::t1
+  API -->|mTLS| ORCH["LangGraph Orchestrator<br/>OPA Policy Guardrails"]:::t2
+  ORCH -->|dispatch| KAF{Kafka Event Bus}:::t2
+  KAF --> DBA["DB_Agent"]:::t2
+  KAF --> QNT["Quant Agent"]:::t2
+  KAF --> NWS["News_Agent"]:::t2
+  KAF --> ALT["Alt_Agent"]:::t2
+  DBA --> TDB[("TimescaleDB")]:::store
+  QNT --> TDB
+  NWS --> QDB[("Qdrant")]:::store
+  ALT --> KPL["Kpler · Vortexa · Kayrros"]:::store
+  TDB --> SS["State Store"]:::t2
+  QDB --> SS
+  KPL --> SS
+  SS -->|full context| BRAIN(("Master<br/>Reasoning LLM")):::t2
+  BRAIN --> RAT["Rationale<br/>&quot;I choose this because…&quot;"]:::t2
+  RAT --> AM["Asset Manager Agent<br/>Kelly Criterion"]:::t3
+  HFM["Human Fund Manager<br/>oversight"]:::t3 -->|approval| AM
+  AM --> ALLOC["Allocation"]:::t3
+  ALLOC --> EXEC["Execution Engine<br/>Tier 4 guardrails"]:::t4
+        </pre>
+      </div>
+    </section>
+
+    <!-- 03 -->
+    <section id="orchestration">
+      <div class="sec-head"><span class="num">03</span><h2>Multi-Agent Orchestration &amp; Control Flow</h2></div>
+      <div class="prose">
+        <p>ArthaAI layers macro-level workflow orchestration with micro-level reasoning execution. At the top, <strong>LangGraph</strong> is the foundational orchestrator for directional and recursive processes, decomposing complex queries into discrete analytical steps. Rather than a single context window, it uses a <span class="term">GraphState</span> primitive — a shared-state mechanism every node can access, append to, and reference. This is critical for financial analysis, which is nonlinear and iterative: a sentiment reading may loop back to the historical database for correlation testing, natively supported by LangGraph's cyclic graph structure.</p>
+        <p>One level beneath, individual nodes use <strong>Strands Agents</strong> to manage granular interactions between foundation models and tools. When a task routes to a node, the Strands agent reasons on the sub-query, triggers specialised tools to retrieve metrics, and synthesises a structured response for the global state — separating macro-workflow management from micro-execution.</p>
+        <p class="dim">The integration bottleneck is solved with the <strong>Model Context Protocol (MCP)</strong> — an open standardisation layer acting as a universal interface for AI applications. Standardised MCP servers for internal databases and external vendors let agents dynamically discover and connect to sources without hardcoded, fragile API modifications, reducing integration complexity exponentially.</p>
+      </div>
+    </section>
+
+    <!-- 04 -->
+    <section id="agents">
+      <div class="sec-head"><span class="num">04</span><h2>Specialised Agent Topologies</h2></div>
+      <div class="prose">
+        <p>Efficacy is predicated on rigid domain isolation. Each worker agent operates with tailored system prompts, restricted context windows, and highly specific MCP tool access — maximum analytical depth within its designated domain.</p>
+      </div>
+
+      <div class="cards">
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">DB_Agent</span>
+          <p class="role">The quantitative anchor. Low-latency querying of historical warehouses and relational tick tables, bypassing raw LLM math.</p>
+          <dl>
+            <dt>Tools</dt><dd class="pill">SQL-based MCP</dd>
+            <dt>Store</dt><dd class="pill">TimescaleDB</dd>
+            <dt>Output</dt><dd>OHLCV arrays · deterministic technical indicators</dd>
+          </dl>
+        </div>
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">Quant Agent</span>
+          <p class="role">Studies mathematical financial models over the time-series aggregations, translating price history into statistical structure.</p>
+          <dl>
+            <dt>Tools</dt><dd class="pill">Math models</dd>
+            <dt>Store</dt><dd class="pill">TimescaleDB</dd>
+            <dt>Output</dt><dd>Variance, volatility &amp; return statistics</dd>
+          </dl>
+        </div>
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">News_Agent</span>
+          <p class="role">Live ingestion &amp; sentiment. Monitors global news, regulatory filings, and macro calendars; retrieves semantically clustered events via hybrid search.</p>
+          <dl>
+            <dt>Tools</dt><dd class="pill">Hybrid search</dd>
+            <dt>Store</dt><dd class="pill">Qdrant</dd>
+            <dt>Output</dt><dd>Source-attributed narrative sentiment</dd>
+          </dl>
+        </div>
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">Alt_Agent</span>
+          <p class="role">Seeks information asymmetry through physical, real-world metrics — satellite and sensor alternative data revealing economic reality before official statistics.</p>
+          <dl>
+            <dt>Tools</dt><dd class="pill">External APIs</dd>
+            <dt>Store</dt><dd class="pill">Kpler</dd>
+            <dt>Output</dt><dd>Cargo flows · storage levels · geospatial signals</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>News &amp; narrative intelligence providers</caption>
+          <thead><tr><th>Provider</th><th>Core strength</th><th>Primary financial use case</th></tr></thead>
+          <tbody>
+            <tr><td><span class="name">Permutable</span></td><td>Source-traceable narrative intelligence</td><td>Commodity sentiment signals; tracking when market themes strengthen, fade, or reverse.</td></tr>
+            <tr><td><span class="name">LSEG</span></td><td>Broad commodity market data</td><td>Terminal-led Reuters news, fundamental pricing, and macroeconomic analytics.</td></tr>
+            <tr><td><span class="name">S&amp;P Global</span></td><td>Benchmarks and research</td><td>Market-structure analysis, supply-demand fundamentals, authoritative pricing benchmarks.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Alternative / physical intelligence providers</caption>
+          <thead><tr><th>Provider</th><th>Core strength</th><th>Primary physical use case</th></tr></thead>
+          <tbody>
+            <tr><td><span class="name">Kpler</span></td><td>Physical commodity flows</td><td>Cargo movements, trade routes, maritime shipping visibility, and vessel compliance.</td></tr>
+            <tr><td><span class="name">Vortexa</span></td><td>Energy cargo analytics</td><td>Near-real-time freight intelligence for crude, refined products, and LNG.</td></tr>
+            <tr><td><span class="name">Kayrros</span></td><td>Satellite &amp; geospatial</td><td>Physical asset activity, infrastructure emissions, and supply-chain bottlenecks.</td></tr>
+            <tr><td><span class="name">Ursa Space</span></td><td>Radar &amp; optical satellite</td><td>Global oil storage, metal-mining stockpiles, and crop health / yield estimates.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 05 -->
+    <section id="brain">
+      <div class="sec-head"><span class="num">05</span><h2>Master Reasoning LLM — the "Brain"</h2></div>
+      <div class="prose">
+        <p>At the apex of Tier&nbsp;2 sits an aggregator model built for complex logical deduction. Once worker agents populate the LangGraph State Store with quantitative arrays, sentiment vectors, and physical data, the Master Reasoning LLM ingests this unified context. Its directive is to evaluate <strong>conflicting signals</strong> — a bullish technical breakout contradicting bearish satellite inventory congestion — and synthesise a probabilistically weighted forecast.</p>
+        <p>Crucially, the model is mandated to produce an explicit, step-by-step reasoning chain, concluding with <em>"I choose this because of that reason."</em> This transforms the system from a black-box oracle into an explainable, auditable platform that human oversight committees can trust.</p>
+      </div>
+      <div class="cards">
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">SEAL</span>
+          <p class="role">Self-Adapting Language Models generate synthetic training data and self-edits in offline staging to continuously improve financial logic via few-shot learning.</p>
+        </div>
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">Replay&nbsp;Buffers</span>
+          <p class="role">Catastrophic-forgetting mitigation: memory replay and constrained gradient updates preserve knowledge of historical anomalies (2008, 2020).</p>
+        </div>
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">NeMo&nbsp;Guardrails</span>
+          <p class="role">Programmable input, output, and execution rails intercept the logic flow; hardcoded circuit breakers enforce drawdown limits and mandatory stop-losses.</p>
+        </div>
+        <div class="card" style="--rail: var(--t2)">
+          <span class="codename">Evals</span>
+          <p class="role">Offline backtests audit for look-ahead bias; online evaluations monitor decision trajectories and reasoning traces in real time.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 -->
+    <section id="security">
+      <div class="sec-head"><span class="num">06</span><h2>Zero-Trust Security, Identity &amp; Governance</h2></div>
+      <div class="prose">
+        <p>Perimeter-based security — which trusts a token once it crosses the network boundary — is fundamentally insufficient for dynamic AI. If a single agent is manipulated via prompt injection from a scraped article, a perimeter model lets it pivot laterally. ArthaAI assumes breach is constant: nothing is trusted by default; every action is cryptographically verified, explicitly limited, and comprehensively logged, under the <strong>CSA Agentic Trust Framework</strong>.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption>Zero-trust control layers</caption>
+          <thead><tr><th>Layer</th><th>Mechanism</th><th>Guarantee</th></tr></thead>
+          <tbody>
+            <tr><td><span class="name">Ingress auth</span></td><td>MCP Authentication · OAuth 2.1</td><td>Dynamic machine-to-machine trust; no static, long-lived keys.</td></tr>
+            <tr><td><span class="name">Identity</span></td><td>SPIFFE/SPIRE IDs bound to JWTs · RBAC</td><td>Ephemeral least-privilege identity per agent instance.</td></tr>
+            <tr><td><span class="name">Secrets</span></td><td>HashiCorp Vault</td><td>Short-lived just-in-time credentials, auto-revoked on task completion.</td></tr>
+            <tr><td><span class="name">Transport</span></td><td>mTLS via GenAI API Gateway (Apigee)</td><td>Encrypted data-in-transit across the service mesh.</td></tr>
+            <tr><td><span class="name">Policy</span></td><td>Open Policy Agent · Rego</td><td>Policy-as-code evaluates every tool call; blocks out-of-scope actions.</td></tr>
+            <tr><td><span class="name">Data access</span></td><td>Database-enforced permissions</td><td>Trust shifts to the deterministic engine; the agent is an untrusted client.</td></tr>
+            <tr><td><span class="name">Observability</span></td><td>OpenTelemetry tracing · egress scrubbing</td><td>Full prompt-to-tool auditability; PII/PHI tokenisation on egress.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <span class="k">Key decision · database-enforced access control</span>
+        <p>Early implementations relied on the agent's system prompt to respect data boundaries — but LLMs are probabilistic and easily manipulated. ArthaAI shifts the trust boundary to the database engine: agent operations execute within sessions scoped to the current user's permissions, so even a manipulated query is rejected at the source.</p>
+      </div>
+    </section>
+
+    <!-- 07 -->
+    <section id="data">
+      <div class="sec-head"><span class="num">07</span><h2>Data Persistence &amp; Retrieval</h2></div>
+      <div class="prose">
+        <p>Financial architecture requires a bifurcated data strategy: a specialised time-series store for quantitative metrics and a performant vector store for narrative intelligence. For time-series, ArthaAI implements <strong>TimescaleDB</strong> — a production-grade extension for PostgreSQL — over alternatives, keeping full SQL-ecosystem compatibility while adding time-based indexing and chunk pruning.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption>Time-series database evaluation</caption>
+          <thead><tr><th>Solution</th><th>Query language</th><th>Architecture</th><th>Primary advantage</th></tr></thead>
+          <tbody>
+            <tr><td><span class="name">MongoDB</span></td><td>MQL (BSON)</td><td>General-purpose document store</td><td>Rapid schema iteration, but inefficient for dense time-series math.</td></tr>
+            <tr><td><span class="name">InfluxDB</span></td><td>Flux</td><td>Purpose-built time-series</td><td>Aggressive columnar compression, but proprietary query syntax.</td></tr>
+            <tr class="hi"><td><span class="name">TimescaleDB</span></td><td>SQL (PostgreSQL)</td><td>Relational time-series</td><td>Standard SQL extended with time-based indexing and chunk pruning. <b>Selected.</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose">
+        <p>The schema pairs relational tables (e.g. <span class="term">crypto_assets</span> metadata) with hypertables (e.g. <span class="term">crypto_ticks</span>) that auto-partition into 7-day chunks, storing time as <span class="term">TIMESTAMPTZ</span> for UTC normalisation. Specialised functions like <span class="term">time_bucket</span> plus continuous materialised views offload OHLCV aggregation from the agents.</p>
+        <p>For narrative intelligence, ArthaAI uses <strong>Qdrant</strong> — an open-source vector engine in Rust — alongside <strong>Tensorlake</strong> pipelines that parse complex financial PDFs and enrich every chunk with document-level metadata. Payload indexing attaches structured metadata (tickers, timestamps, authority scores) to vectors so the News_Agent applies <strong>hybrid search</strong>: hard metadata filters narrow scope before semantic similarity runs, eliminating cross-asset contamination. A <strong>Kafka</strong> event bus decouples data producers from consumers so ingestion spikes never bottleneck the analytical agents.</p>
+      </div>
+    </section>
+
+    <!-- 08 -->
+    <section id="resiliency">
+      <div class="sec-head"><span class="num">08</span><h2>Microservices Resiliency</h2></div>
+      <div class="prose">
+        <p>In a decoupled environment, a single unresponsive vendor can tie up agent threads, exhaust memory, and cascade into total downtime. Built on <strong>FastAPI</strong>, the platform enforces connection pooling, request batching, and token-bucket rate limiting (<span class="term">slowapi</span>). Its cornerstone is the <strong>Circuit Breaker</strong> pattern (<span class="term">pybreaker</span>), integrated into FastAPI middleware to enforce fail-fast isolation across three states.</p>
+      </div>
+      <div class="states">
+        <div class="state closed">
+          <span class="lab"><span class="led"></span>CLOSED</span>
+          <p>Default healthy state. Requests flow freely to the external service; the breaker keeps a rolling window count of failures.</p>
+        </div>
+        <div class="state open">
+          <span class="lab"><span class="led"></span>OPEN</span>
+          <p>Failure rate exceeds threshold (e.g. 5 timeouts / 10s). The circuit trips — subsequent requests are rejected immediately without a network call, preventing resource exhaustion.</p>
+        </div>
+        <div class="state half">
+          <span class="lab"><span class="led"></span>HALF-OPEN</span>
+          <p>After a timeout elapses, a strictly limited set of probe requests test recovery. Success resets to CLOSED; failure reverts to OPEN.</p>
+        </div>
+      </div>
+      <div class="prose">
+        <p class="dim">When a breaker opens or retries are exhausted, the system degrades gracefully to predefined fallback protocols — for example, redirecting from the primary reasoning LLM to an internally hosted open-weight model for uninterrupted, if degraded, execution.</p>
+      </div>
+    </section>
+
+    <!-- 09 -->
+    <section id="allocation">
+      <div class="sec-head"><span class="num">09</span><h2>Mathematical Capital Allocation</h2></div>
+      <div class="prose">
+        <p>A high-probability signal is only half the challenge; realising it requires rigorous position sizing. The dedicated <strong>Asset Manager Agent</strong> translates the Master LLM's probability forecasts into precise fractional bet sizes, founded on the <strong>Kelly Criterion</strong> (1956), which maximises the expected logarithmic growth rate of capital.</p>
+      </div>
+      <div class="formula">
+        <span class="fn">Discrete Kelly · binary win/loss</span>
+        <div class="eq">f&nbsp;=&nbsp;W&nbsp;−&nbsp;(1&nbsp;−&nbsp;W)&nbsp;/&nbsp;R</div>
+        <p class="where"><b>f</b> optimal fraction of portfolio &nbsp;·&nbsp; <b>W</b> probability of a winning trade (from the LLM's confidence interval) &nbsp;·&nbsp; <b>R</b> historical win/loss ratio (avg positive return ÷ |avg negative return|).</p>
+      </div>
+      <div class="formula">
+        <span class="fn">Continuous Kelly · equities &amp; futures</span>
+        <div class="eq">f*&nbsp;=&nbsp;(μ&nbsp;−&nbsp;r)&nbsp;/&nbsp;σ<sup>2</sup></div>
+        <p class="where"><b>f*</b> optimal leverage / portfolio fraction &nbsp;·&nbsp; <b>μ</b> expected strategy return &nbsp;·&nbsp; <b>r</b> risk-free rate &nbsp;·&nbsp; <b>σ²</b> historical variance, fetched from TimescaleDB aggregations.</p>
+      </div>
+      <div class="prose">
+        <p>Full Kelly is notoriously dangerous — it assumes perfect knowledge of distributions, while real markets exhibit non-stationary volatility and fat tails. Following <strong>Busseti et al. (2016)</strong>, the agent enforces a risk-constrained optimisation that treats maximum drawdown as a hard constraint, then applies a <strong>fractional multiplier</strong> (half- or quarter-Kelly) for a smoother equity curve. Across a multi-asset universe, individual fractions summing above 1.0 are scaled proportionally downward.</p>
+      </div>
+      <div class="callout">
+        <span class="k">Deterministic override</span>
+        <p>If the risk-constrained Kelly calculation suggests risking 15% of capital on a single crude-oil position but policy caps single-instrument exposure at 5%, the deterministic policy parameter permanently overrides the probabilistic model — AI remains bound by the mathematical reality of risk management.</p>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section id="roadmap">
+      <div class="sec-head"><span class="num">10</span><h2>Incremental Deployment Roadmap</h2></div>
+      <div class="prose">
+        <p>A big-bang deployment of a zero-trust multi-agent system invites massive integration failure. ArthaAI is deployed incrementally as modular microservices across five sprints.</p>
+      </div>
+      <div class="sprints">
+        <div class="sprint"><div class="idx">1<span class="k">SPRINT</span></div><div><h3>Core Infrastructure &amp; API Gateway</h3><p>Kubernetes clusters, the secure GenAI API Gateway (mTLS, rate limiting), the Kafka event bus, and HashiCorp Vault integrated with the identity provider for SPIFFE/SPIRE issuance and dynamic secret injection.</p></div></div>
+        <div class="sprint"><div class="idx">2<span class="k">SPRINT</span></div><div><h3>Database Agent &amp; Historical RAG</h3><p>TimescaleDB hypertables for tick ingestion and OHLCV aggregation; Qdrant plus Tensorlake for hybrid search and payload indexing. The DB_Agent ships as a standalone microservice, verified to pull pricing data without hallucination.</p></div></div>
+        <div class="sprint"><div class="idx">3<span class="k">SPRINT</span></div><div><h3>Live News Agent &amp; Sentiment</h3><p>The News_Agent connects to external market APIs and providers like Permutable and LSEG, tuning embeddings and enforcing Qdrant payload filters so sentiment is attributed to the correct asset.</p></div></div>
+        <div class="sprint"><div class="idx">4<span class="k">SPRINT</span></div><div><h3>Master LLM Orchestration</h3><p>LangGraph as the macro-orchestration engine with GraphState schemas and routing nodes; standardised MCP servers; the Master Reasoning LLM introduced behind human-in-the-loop checkpoints requiring manual approval of its synthesis.</p></div></div>
+        <div class="sprint"><div class="idx">5<span class="k">SPRINT</span></div><div><h3>Execution Engine &amp; Hardening</h3><p>The Alt_Agent ingests satellite intelligence; the Asset Manager Agent activates Kelly-optimised allocation; OPA sidecars enforce Rego on every execution graph; OpenTelemetry pipelines track prompt-to-tool chains against semantic drift and exfiltration.</p></div></div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="rule"></div>
+      ArthaAI · Production Blueprint — internal system architecture &amp; onboarding reference.<br/>
+      Zero-Trust Multi-Agent LLM Framework for equities &amp; physical commodities.
+    </footer>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function (a) { map[a.getAttribute('href').slice(1)] = a; });
+    var sections = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); }).filter(Boolean);
+
+    if ('IntersectionObserver' in window) {
+      var obs = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            links.forEach(function (l) { l.classList.remove('active'); });
+            if (map[e.target.id]) map[e.target.id].classList.add('active');
+          }
+        });
+      }, { rootMargin: '-12% 0px -78% 0px', threshold: 0 });
+      sections.forEach(function (s) { obs.observe(s); });
+    }
+
+    links.forEach(function (a) {
+      a.addEventListener('click', function (ev) {
+        var id = a.getAttribute('href').slice(1);
+        var el = document.getElementById(id);
+        if (el) { ev.preventDefault(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); history.replaceState(null, '', '#' + id); }
+      });
+    });
+  })();
+</script>
