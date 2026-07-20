@@ -1,0 +1,504 @@
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#F3F4F6; --surface:#FFFFFF; --surface-2:#FAFAF9; --sunken:#F0F1F4;
+    --border:#E3E6EB; --border-strong:#CFD4DC;
+    --text:#191E26; --muted:#59626F; --faint:#8A93A1;
+    --accent:#8A5E15; --accent-bright:#B4832A; --accent-soft:rgba(180,131,42,.12);
+    --data:#2F6FB0; --core:#A2761F; --news:#2C7D6C; --risk:#B23A48;
+    --up:#2E7D50; --down:#B23A48; --warn:#B0810F;
+    --shadow:0 1px 2px rgba(16,20,28,.04), 0 10px 28px rgba(16,20,28,.06);
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0D1015; --surface:#14181F; --surface-2:#1A1F28; --sunken:#101419;
+      --border:#272E39; --border-strong:#333B48;
+      --text:#E6EAF0; --muted:#9AA4B2; --faint:#667082;
+      --accent:#E0A64A; --accent-bright:#F1BE68; --accent-soft:rgba(224,166,74,.11);
+      --data:#5B9BD5; --core:#E0A64A; --news:#4FB79E; --risk:#E06B78;
+      --up:#56C08A; --down:#E06B78; --warn:#E0A64A;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.36);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#F3F4F6; --surface:#FFFFFF; --surface-2:#FAFAF9; --sunken:#F0F1F4;
+    --border:#E3E6EB; --border-strong:#CFD4DC; --text:#191E26; --muted:#59626F; --faint:#8A93A1;
+    --accent:#8A5E15; --accent-bright:#B4832A; --accent-soft:rgba(180,131,42,.12);
+    --data:#2F6FB0; --core:#A2761F; --news:#2C7D6C; --risk:#B23A48;
+    --up:#2E7D50; --down:#B23A48; --warn:#B0810F;
+    --shadow:0 1px 2px rgba(16,20,28,.04), 0 10px 28px rgba(16,20,28,.06);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0D1015; --surface:#14181F; --surface-2:#1A1F28; --sunken:#101419;
+    --border:#272E39; --border-strong:#333B48; --text:#E6EAF0; --muted:#9AA4B2; --faint:#667082;
+    --accent:#E0A64A; --accent-bright:#F1BE68; --accent-soft:rgba(224,166,74,.11);
+    --data:#5B9BD5; --core:#E0A64A; --news:#4FB79E; --risk:#E06B78;
+    --up:#56C08A; --down:#E06B78; --warn:#E0A64A;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.36);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       font-size:1.0625rem;line-height:1.65;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3{text-wrap:balance;letter-spacing:-.02em;line-height:1.13;margin:0;}
+  p{margin:0;}
+  .wrap{max-width:860px;margin:0 auto;padding:0 clamp(1.1rem,4vw,2rem) 5rem;}
+  .eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.16em;text-transform:uppercase;
+           color:var(--accent);font-weight:600;}
+
+  /* hero */
+  header{padding:3.6rem 0 2.4rem;border-bottom:1px solid var(--border);
+         animation:rise .6s cubic-bezier(.2,.7,.3,1) both;}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion: reduce){header{animation:none}*{scroll-behavior:auto!important}}
+  header h1{font-size:clamp(2rem,1.3rem+3.4vw,3.1rem);font-weight:800;margin:.7rem 0 .8rem;}
+  header h1 .hl{color:var(--accent);}
+  header .lede{font-size:1.16rem;color:var(--muted);max-width:60ch;line-height:1.55;}
+  .stats{display:flex;flex-wrap:wrap;gap:.55rem;margin-top:1.7rem;}
+  .stat{background:var(--surface);border:1px solid var(--border-strong);border-radius:100px;
+        padding:.38rem .8rem;font-size:.82rem;color:var(--muted);display:inline-flex;gap:.45rem;align-items:baseline;}
+  .stat b{color:var(--text);font-weight:750;font-family:var(--mono);}
+
+  section{padding:2.8rem 0 .5rem;}
+  section > h2{font-size:clamp(1.35rem,1.1rem+1vw,1.75rem);font-weight:760;margin-bottom:.5rem;}
+  .sub{color:var(--muted);max-width:64ch;margin-bottom:1.4rem;}
+
+  /* team cards */
+  .team{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:.9rem;}
+  .member{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+          padding:1rem 1.1rem;box-shadow:var(--shadow);border-top:3px solid var(--c);}
+  .member .who{font-weight:750;font-size:1rem;margin-bottom:.15rem;}
+  .member .job{color:var(--muted);font-size:.9rem;line-height:1.5;}
+  .member .tag{font-family:var(--mono);font-size:.7rem;color:var(--c);letter-spacing:.05em;
+               text-transform:uppercase;margin-top:.55rem;display:block;}
+
+  /* timeline */
+  .timeline{display:flex;flex-direction:column;gap:1rem;position:relative;}
+  .step{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+        box-shadow:var(--shadow);overflow:hidden;}
+  .step .top{display:grid;grid-template-columns:2.4rem 1fr;gap:1rem;padding:1.15rem 1.2rem 1rem;}
+  .step .n{font-family:var(--mono);font-weight:750;font-size:.95rem;color:var(--accent);
+           background:var(--accent-soft);border-radius:8px;height:2.1rem;display:grid;place-items:center;}
+  .step h3{font-size:1.05rem;font-weight:750;margin-bottom:.3rem;}
+  .step .say{color:var(--muted);font-size:.97rem;line-height:1.6;}
+  .hood{background:var(--sunken);border-top:1px dashed var(--border-strong);
+        padding:.7rem 1.2rem .8rem 4.6rem;font-family:var(--mono);font-size:.78rem;color:var(--muted);
+        display:flex;flex-wrap:wrap;gap:.35rem 1.1rem;}
+  .hood .k{color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:.68rem;
+           width:100%;margin-bottom:.1rem;}
+  .hood code{color:var(--text);background:none;font-family:var(--mono);}
+  .hood .src{color:var(--accent);}
+
+  /* parallel lanes */
+  .lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:.75rem;
+         margin:.2rem 1.2rem 1.15rem 4.6rem;}
+  .lane{background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--c);
+        border-radius:9px;padding:.75rem .85rem;}
+  .lane .nm{font-family:var(--mono);font-weight:700;font-size:.82rem;color:var(--c);}
+  .lane .dt{font-size:.84rem;color:var(--muted);line-height:1.45;margin-top:.25rem;}
+  .parallel-note{margin:0 1.2rem .3rem 4.6rem;font-family:var(--mono);font-size:.72rem;
+                 letter-spacing:.09em;text-transform:uppercase;color:var(--faint);}
+
+  /* result mock */
+  .mock{background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;
+        padding:1.2rem;box-shadow:var(--shadow);display:grid;gap:.9rem;}
+  .mock .bar{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;}
+  .mock .sym{font-family:var(--mono);font-weight:750;font-size:1.15rem;}
+  .verdictline{font-family:var(--mono);font-weight:800;font-size:1.5rem;color:var(--down);}
+  .mock .meta{font-family:var(--mono);font-size:.78rem;color:var(--muted);}
+  .mock .quote{color:var(--muted);font-size:.93rem;line-height:1.6;border-left:2px solid var(--border-strong);
+               padding-left:.9rem;}
+  .evid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;}
+  .ev{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:.6rem .7rem;}
+  .ev .l{font-family:var(--mono);font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);}
+  .ev .v{font-family:var(--mono);font-weight:700;font-size:.95rem;margin-top:.15rem;}
+  .alloc{background:var(--accent-soft);border:1px solid var(--border-strong);border-radius:10px;
+         padding:.8rem .95rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;}
+  .alloc .big{font-family:var(--mono);font-size:1.5rem;font-weight:800;color:var(--accent);}
+  .alloc .why{font-size:.84rem;color:var(--muted);max-width:38ch;}
+
+  /* tables */
+  .tw{overflow-x:auto;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);}
+  table{border-collapse:collapse;width:100%;min-width:520px;background:var(--surface);font-size:.92rem;}
+  th,td{text-align:left;padding:.75rem 1rem;border-bottom:1px solid var(--border);vertical-align:top;}
+  thead th{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+           font-weight:650;background:var(--surface-2);}
+  tbody tr:last-child td{border-bottom:none;}
+  td .nm2{font-family:var(--mono);font-weight:650;}
+  .pill{font-family:var(--mono);font-size:.7rem;padding:.16rem .5rem;border-radius:100px;border:1px solid var(--border-strong);white-space:nowrap;}
+  .pill.free{color:var(--up);} .pill.paid{color:var(--warn);} .pill.stub{color:var(--muted);}
+
+  /* rails */
+  .rails{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.85rem;}
+  .rail{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:.95rem 1.05rem;
+        box-shadow:var(--shadow);}
+  .rail .t{font-weight:750;font-size:.95rem;margin-bottom:.25rem;}
+  .rail .d{color:var(--muted);font-size:.88rem;line-height:1.5;}
+
+  .callout{border:1px solid var(--border-strong);border-left:3px solid var(--warn);background:var(--surface);
+           border-radius:10px;padding:1rem 1.15rem;}
+  .callout .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--warn);}
+  .callout p{margin-top:.4rem;color:var(--text);font-size:.95rem;}
+
+  .try{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:1.1rem 1.2rem;
+       font-family:var(--mono);font-size:.86rem;color:var(--text);overflow-x:auto;}
+  .try .c{color:var(--faint);}
+
+  footer{margin-top:3rem;padding-top:1.4rem;border-top:1px solid var(--border);
+         color:var(--faint);font-family:var(--mono);font-size:.78rem;}
+
+  @media (max-width:640px){
+    .hood{padding-left:1.2rem;} .lanes,.parallel-note{margin-left:1.2rem;}
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">ArthaAI · Product Walkthrough</span>
+    <h1>You type <span class="hl">GLD</span> and press Analyze.<br/>Here's what happens next.</h1>
+    <p class="lede">A step-by-step tour of the system — written for someone who doesn't write code, with the technical detail tucked underneath each step for anyone who wants it.</p>
+    <div class="stats">
+      <span class="stat"><b>~6s</b> typical run</span>
+      <span class="stat"><b>6</b> specialists</span>
+      <span class="stat"><b>4</b> data sources</span>
+      <span class="stat"><b>1</b> explained decision</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>First, meet the team</h2>
+    <p class="sub">The system isn't one big program. It's six specialists that each do one job well, coordinated by a manager. Think of it as a small research desk that assembles itself the moment you click.</p>
+    <div class="team">
+      <div class="member" style="--c:var(--data)">
+        <div class="who">The Chart Reader</div>
+        <div class="job">Reads price history and works out the trend — moving averages, momentum, whether it's rising or falling.</div>
+        <span class="tag">DB_Agent</span>
+      </div>
+      <div class="member" style="--c:var(--data)">
+        <div class="who">The Statistician</div>
+        <div class="job">Measures return, volatility and how often this asset historically wins vs loses.</div>
+        <span class="tag">Quant_Agent</span>
+      </div>
+      <div class="member" style="--c:var(--news)">
+        <div class="who">The News Reader</div>
+        <div class="job">Pulls recent, source-attributed headlines for <em>this asset only</em> and scores the mood.</div>
+        <span class="tag">News_Agent</span>
+      </div>
+      <div class="member" style="--c:var(--news)">
+        <div class="who">The Satellite Watcher</div>
+        <div class="job">Physical-world signals — oil in storage, cargo ships. <strong>Currently a placeholder</strong> (real feeds cost money).</div>
+        <span class="tag">Alt_Agent · stub</span>
+      </div>
+      <div class="member" style="--c:var(--core)">
+        <div class="who">The Chief Strategist</div>
+        <div class="job">Reads everything the four found, resolves contradictions, and writes the verdict in plain English. This is the AI model (Gemini).</div>
+        <span class="tag">Master Reasoning LLM</span>
+      </div>
+      <div class="member" style="--c:var(--risk)">
+        <div class="who">The Risk Manager</div>
+        <div class="job">Decides how much money the idea is worth — and enforces hard limits the AI cannot override.</div>
+        <span class="tag">Asset_Manager</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The journey, step by step</h2>
+    <p class="sub">Each card says what happens in plain language. The grey strip underneath shows which part of the code runs and where the data comes from.</p>
+
+    <div class="timeline">
+
+      <div class="step">
+        <div class="top">
+          <div class="n">1</div>
+          <div>
+            <h3>Your click leaves the browser</h3>
+            <p class="say">The web page sends a request to our own server saying "analyse GLD". You don't enter any password — the page was already handed a secure key when it loaded, so it just works.</p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>dashboard.html → analyze()</code></span>
+          <span>sends <code>POST /analyze/GLD</code></span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">2</div>
+          <div>
+            <h3>Security check at the door</h3>
+            <p class="say">The server checks the key is valid and that you're not hammering it with requests. Bad key, no entry. This is the same gate an outside app would have to pass.</p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>gateway/auth.py</code>, <code>gateway/app.py</code></span>
+          <span>key from <span class="src">HashiCorp Vault</span></span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">3</div>
+          <div>
+            <h3>Fetch the price history — this is where data enters</h3>
+            <p class="say">If we've never seen GLD before, the system registers it and downloads roughly <strong>two years of daily prices</strong> from the market data source, then stores them in our own database so future runs are instant. This is the slow part on a brand-new ticker (a few seconds).</p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>data/ingest.py → ingest()</code></span>
+          <span>fetches from <span class="src">Yahoo Finance (free)</span></span>
+          <span>stores in <span class="src">TimescaleDB</span></span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">4</div>
+          <div>
+            <h3>Four specialists work at the same time</h3>
+            <p class="say">Rather than queuing, all four run in parallel — which is why the whole thing takes seconds, not a minute. Before any of them can touch data, a policy engine checks that <em>that specific specialist</em> is allowed to use <em>that specific tool</em>. The news reader, for example, has no permission to place trades.</p>
+          </div>
+        </div>
+        <p class="parallel-note">Running simultaneously</p>
+        <div class="lanes">
+          <div class="lane" style="--c:var(--data)">
+            <div class="nm">Chart Reader</div>
+            <div class="dt">Trend, moving averages, momentum — from our price database.</div>
+          </div>
+          <div class="lane" style="--c:var(--data)">
+            <div class="nm">Statistician</div>
+            <div class="dt">Return, volatility, win rate — the maths the risk manager needs.</div>
+          </div>
+          <div class="lane" style="--c:var(--news)">
+            <div class="nm">News Reader</div>
+            <div class="dt">Headlines filtered to GLD only, then scored for mood.</div>
+          </div>
+          <div class="lane" style="--c:var(--news)">
+            <div class="nm">Satellite Watcher</div>
+            <div class="dt">Physical signals. Placeholder today; skips equities entirely.</div>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>agents/db_agent, quant_agent, news_agent, alt_agent</code></span>
+          <span>reads <span class="src">TimescaleDB</span> + <span class="src">Qdrant</span></span>
+          <span>permissions by <span class="src">Open Policy Agent</span></span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">5</div>
+          <div>
+            <h3>Everything lands on one shared desk</h3>
+            <p class="say">All four findings are collected into a single shared record. Nothing is lost or summarised away — the strategist sees the complete picture, including where the specialists disagree.</p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>orchestration/graph.py</code> (LangGraph)</span>
+          <span>shared state: <code>GraphState</code></span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">6</div>
+          <div>
+            <h3>The strategist makes the call — and explains it</h3>
+            <p class="say">The AI model reads the full picture and writes a verdict: <strong>bullish, bearish, or neutral</strong>, a confidence level, and a written rationale that must end with "I choose this because…". It's required to flag conflicting evidence rather than paper over it.</p>
+            <p class="say" style="margin-top:.55rem">If the AI is unavailable, the system automatically falls back to the next option — a local model, or a built-in rule-based reasoner. <strong>It never returns nothing.</strong></p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>agents/master_llm.py → reason()</code></span>
+          <span>calls <span class="src">Google Gemini 2.5 Flash</span></span>
+          <span>fallback: local model → offline reasoner</span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">7</div>
+          <div>
+            <h3>The risk manager sizes the position</h3>
+            <p class="say">A century-old formula (the Kelly Criterion) converts the odds into "what fraction of the portfolio is this worth?" — then deliberately takes only a <strong>quarter</strong> of that to smooth out the bumps, and finally caps it at <strong>5% of the portfolio</strong>. That cap is absolute: the AI cannot argue its way past it.</p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>runs <code>agents/asset_manager.py → size()</code></span>
+          <span>quarter-Kelly + hard 5% policy cap</span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="top">
+          <div class="n">8</div>
+          <div>
+            <h3>The answer comes back and the screen fills in</h3>
+            <p class="say">The verdict, the reasoning, the numbers behind it, and the suggested position size all travel back to your browser, and the price chart redraws. If the ticker doesn't exist, you get a clear "no market data" message instead of a blank screen.</p>
+          </div>
+        </div>
+        <div class="hood">
+          <span class="k">Under the hood</span>
+          <span>returns <code>{verdict, allocation, evidence}</code></span>
+          <span>rendered by <code>dashboard.html</code></span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>What he'll actually see</h2>
+    <p class="sub">A real result from the system — these are genuine numbers from a GLD run.</p>
+    <div class="mock">
+      <div class="bar">
+        <span class="sym">GLD · SPDR Gold Shares</span>
+        <span class="meta">400 bars · last close 368.41</span>
+      </div>
+      <div>
+        <div class="verdictline">BEARISH</div>
+        <div class="meta">confidence 65% · answered by gemini</div>
+      </div>
+      <p class="quote">"The technical analysis indicates a bearish trend, with price below both the 20- and 50-day moving averages. News sentiment is mildly positive, which conflicts with the technical picture. I choose this because the weight of price evidence outruns a modest sentiment tailwind."</p>
+      <div class="evid">
+        <div class="ev"><div class="l">Trend</div><div class="v" style="color:var(--down)">bearish −0.55</div></div>
+        <div class="ev"><div class="l">Momentum (RSI)</div><div class="v">45.5</div></div>
+        <div class="ev"><div class="l">News mood</div><div class="v" style="color:var(--up)">+0.23</div></div>
+        <div class="ev"><div class="l">Volatility</div><div class="v">25.2%</div></div>
+      </div>
+      <div class="alloc">
+        <span class="big">5.00%</span>
+        <span class="why">Position size after quarter-Kelly scaling — <strong>capped by policy</strong>. The raw formula wanted far more; the 5% limit overrode it.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the data actually comes from</h2>
+    <p class="sub">Worth knowing for budget conversations: almost everything today is free, which is deliberate until the strategy proves itself.</p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Source</th><th>What it provides</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td><span class="nm2">Yahoo Finance</span></td><td>Daily price history for any listed ticker, fetched on demand</td><td><span class="pill free">free</span></td></tr>
+          <tr><td><span class="nm2">TimescaleDB</span></td><td>Our own store of prices — makes repeat runs instant</td><td><span class="pill free">free / self-hosted</span></td></tr>
+          <tr><td><span class="nm2">Qdrant</span></td><td>News &amp; sentiment search, filtered per asset</td><td><span class="pill free">free / self-hosted</span></td></tr>
+          <tr><td><span class="nm2">Google Gemini</span></td><td>The strategist's reasoning and written rationale</td><td><span class="pill free">free tier today</span></td></tr>
+          <tr><td><span class="nm2">NASDAQ directory</span></td><td>Catalog of ~12,500 US-listed symbols for search</td><td><span class="pill free">free</span></td></tr>
+          <tr><td><span class="nm2">Kpler / Ursa Space</span></td><td>Satellite &amp; cargo intelligence — <em>not connected</em></td><td><span class="pill paid">paid · future</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>The safety rails</h2>
+    <p class="sub">Designed on the assumption that an AI can be wrong or manipulated. Every limit below is enforced by code, not by asking the model nicely.</p>
+    <div class="rails">
+      <div class="rail"><div class="t">Hard position cap</div><div class="d">No single asset can exceed 5% of the portfolio, whatever the AI concludes.</div></div>
+      <div class="rail"><div class="t">Paper trading only</div><div class="d">Nothing reaches a broker. Orders are simulated; no real money can move.</div></div>
+      <div class="rail"><div class="t">Automatic stop-loss</div><div class="d">Every simulated position carries a pre-set exit level.</div></div>
+      <div class="rail"><div class="t">Daily loss circuit-breaker</div><div class="d">A 10% daily drawdown halts all trading outright.</div></div>
+      <div class="rail"><div class="t">Least-privilege agents</div><div class="d">Each specialist can only touch its own tools — checked on every single call.</div></div>
+      <div class="rail"><div class="t">Never fails silently</div><div class="d">If a data source or the AI goes down, the system degrades to a backup and says so.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Honest status</h2>
+    <p class="sub">What a product owner should know before showing this to anyone else.</p>
+    <div class="tw" style="margin-bottom:1.2rem">
+      <table>
+        <thead><tr><th>Area</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td>End-to-end flow, all six specialists, web UI, security, database layer</td><td><span class="pill free">working</span></td></tr>
+          <tr><td>Any US-listed ticker analysable on demand (~12,500 catalogued)</td><td><span class="pill free">working</span></td></tr>
+          <tr><td>Gemini reasoning + automatic fallbacks + 27 automated tests</td><td><span class="pill free">working</span></td></tr>
+          <tr><td>News feed — currently a small sample set, not a live wire</td><td><span class="pill stub">placeholder</span></td></tr>
+          <tr><td>Satellite / cargo intelligence</td><td><span class="pill stub">placeholder</span></td></tr>
+          <tr><td>Enterprise identity, encrypted service mesh, Kubernetes</td><td><span class="pill stub">not deployed</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <span class="k">The one thing that matters most</span>
+      <p>The plumbing works end to end — but the underlying trading signal has <strong>not yet been shown to beat simply buying and holding</strong>. Our own backtest says it currently underperforms. That's the honest headline: this is a working, well-built platform waiting for a proven edge, not a money-making system. Improving that signal is the next real milestone — and nothing should touch real money before it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why this matters, and where it could go</h2>
+    <p class="sub">The differentiator isn't the prediction — plenty of tools guess a direction. It's that every call arrives with its <strong>reasoning, its sources, and its position size</strong> attached, and that the maths is separated from the AI so it can be independently checked. A black-box signal can't be audited; this can.</p>
+
+    <div class="rails" style="margin-bottom:1.4rem">
+      <div class="rail"><div class="t">Explains itself</div><div class="d">Every verdict states the evidence it used and where it conflicts — reviewable by a human before anything happens.</div></div>
+      <div class="rail"><div class="t">Numbers ≠ AI</div><div class="d">All maths is deterministic and testable. The model interprets; it never invents a figure that sizes a trade.</div></div>
+      <div class="rail"><div class="t">Swappable brains</div><div class="d">Gemini today, a local private model tomorrow — one config line. No vendor lock-in, and data can stay in-house.</div></div>
+    </div>
+
+    <h3 style="font-size:1.05rem;font-weight:750;margin-bottom:.5rem">The investment ladder</h3>
+    <p class="sub">Each rung buys a specific capability. Nothing needs to be bought until the rung below has paid off. <em>Figures are rough planning estimates, not quotes.</em></p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Stage</th><th>Rough monthly cost</th><th>What it unlocks</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="nm2">Today</span></td>
+            <td><span class="pill free">~$0</span></td>
+            <td>Everything you just saw — any US ticker, on demand, on a laptop. Free data, free AI tier, self-hosted databases.</td>
+          </tr>
+          <tr>
+            <td><span class="nm2">Hosted</span></td>
+            <td><span class="pill free">~$40–100</span></td>
+            <td>Runs in the cloud instead of a laptop, so it's always on and shareable with a small team.</td>
+          </tr>
+          <tr>
+            <td><span class="nm2">Live news</span></td>
+            <td><span class="pill free">~$50–200</span></td>
+            <td>A real news wire and proper sentiment scoring, replacing today's sample data. Sentiment becomes genuinely tradeable input.</td>
+          </tr>
+          <tr>
+            <td><span class="nm2">Whole-market scan</span></td>
+            <td><span class="pill paid">~$1k–5k</span></td>
+            <td>Bulk price data for all ~12,500 listed names — shifts the product from "analyse one ticker" to <strong>"rank the entire market every morning"</strong>. This is the biggest product leap.</td>
+          </tr>
+          <tr>
+            <td><span class="nm2">Physical intelligence</span></td>
+            <td><span class="pill paid">$5k–40k+</span></td>
+            <td>Satellite and cargo feeds (oil in storage, ships at sea). The genuine information-asymmetry edge in commodities — and the reason the Satellite Watcher exists as a placeholder today.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout" style="margin-top:1.3rem;border-left-color:var(--accent)">
+      <span class="k" style="color:var(--accent)">The gate before any spending</span>
+      <p>Every rung above is wasted money until one thing is true: <strong>the signal must beat buying and holding, out of sample.</strong> It doesn't yet. The right sequence is to improve the signal on free data — where iteration costs nothing — and only then buy the data that amplifies a proven edge. Spending first would mean paying to scale something that doesn't work.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Seeing it live</h2>
+    <p class="sub">Three commands on a laptop, then a browser tab.</p>
+    <div class="try">
+      <div><span class="c"># start the services and the app</span></div>
+      <div>make up &amp;&amp; make serve</div>
+      <div style="margin-top:.6rem"><span class="c"># then open</span></div>
+      <div>http://localhost:8000/</div>
+      <div style="margin-top:.6rem"><span class="c"># type any ticker — GLD, NVDA, RDW — and press Analyze</span></div>
+    </div>
+  </section>
+
+  <footer>
+    ArthaAI · walkthrough for product &amp; operations · decision-support only, paper context, not investment advice.
+  </footer>
+</div>

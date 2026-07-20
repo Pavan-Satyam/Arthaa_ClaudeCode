@@ -4,6 +4,11 @@ Multi-agent LLM framework for analysing equities & commodities — an implementa
 of the [architecture blueprint](arthaai-architecture.html) (open it in a browser, or
 see the published doc). Runs end-to-end on a laptop with free data and no API key.
 
+**Docs**
+- [`HANDOFF.md`](HANDOFF.md) — engineer handoff: step-by-step trace of an Analyze request
+- [`arthaai-architecture.html`](arthaai-architecture.html) — the architecture blueprint
+- [`analyze-walkthrough.html`](analyze-walkthrough.html) — non-technical walkthrough for product/ops stakeholders (flow, data sources, cost ladder)
+
 ## What actually runs
 
 A single command drives the full blueprint pipeline:

@@ -7,6 +7,7 @@ the reference material you need to run, extend, and reason about the system.
 
 - **Branch:** `feat/arthaai-core` (not merged to `main` yet)
 - **Architecture blueprint (the "why"):** [arthaai-architecture.html](arthaai-architecture.html) — open in a browser
+- **Non-technical walkthrough (for PM/COO/stakeholders):** [analyze-walkthrough.html](analyze-walkthrough.html) — the same Analyze flow in plain English, with the code shown underneath each step
 - **User-facing README (setup + provider chain):** [README.md](README.md)
 - **Language/stack:** Python 3.12, FastAPI, LangGraph, TimescaleDB, Qdrant, OPA, Vault, Redpanda (Kafka)
 
