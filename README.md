@@ -9,6 +9,7 @@ see the published doc). Runs end-to-end on a laptop with free data and no API ke
 - [`AI_ENGINEER_HANDOFF.md`](AI_ENGINEER_HANDOFF.md) — AI/ML handoff: prompts, provider layer, RAG, evaluation
 - [`arthaai-architecture.html`](arthaai-architecture.html) — the architecture blueprint
 - [`analyze-walkthrough.html`](analyze-walkthrough.html) — non-technical walkthrough for product/ops stakeholders (flow, data sources, cost ladder)
+- [`LSE_DATA_PLAN.md`](LSE_DATA_PLAN.md) — proposal: evaluating London Strategic Edge as a bulk market-data source (not implemented)
 
 ## What actually runs
 
