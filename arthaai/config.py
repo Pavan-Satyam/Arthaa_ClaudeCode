@@ -43,14 +43,13 @@ class Settings(BaseSettings):
     # LLM — primary provider + optional fallback chain.
     # Providers: anthropic (Claude) | gemini (Google) | local (OpenAI-compatible
     # endpoint: Ollama / LM Studio / vLLM) | offline (deterministic reasoner).
-    llm_provider: Literal["anthropic", "gemini", "local", "bedrock"] = "anthropic"
+    llm_provider: Literal["anthropic", "gemini", "local"] = "anthropic"
     # Explicit ordered chain, e.g. "gemini,local,offline". Empty -> [provider, offline].
     llm_chain: str = ""
     llm_model: str = "claude-sonnet-5"       # anthropic model
     gemini_model: str = "gemini-2.5-flash"
     local_base_url: str = "http://localhost:11434/v1"   # Ollama's OpenAI-compatible API
     local_model: str = "llama3.1"
-    aws_region: str = "us-east-1"
 
     @property
     def llm_chain_list(self) -> list[str]:
