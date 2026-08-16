@@ -1,0 +1,263 @@
+<style>
+  :root{
+    --bg0:#070A0F; --bg1:#0C1119; --bg2:#0F1620;
+    --glass:rgba(20,27,38,0.55); --glass-2:rgba(28,37,52,0.5);
+    --stroke:rgba(255,255,255,0.09); --stroke-2:rgba(255,255,255,0.14);
+    --text:#EAEEF5; --muted:#9AA6B8; --faint:#5E6B80;
+    --built:#5FD09A; --next:#F4C778; --partial:#E0A64A; --defer:#8091A8; --brain:#C89BF0;
+    --flow:rgba(244,199,120,0.45); --flow-track:rgba(244,199,120,0.13); --flow-hot:#FFD98A;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono","JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{
+    background:
+      radial-gradient(1100px 620px at 78% -8%, rgba(200,155,240,.10), transparent 60%),
+      radial-gradient(1000px 700px at 12% 108%, rgba(95,208,154,.08), transparent 62%),
+      radial-gradient(1400px 900px at 50% 40%, rgba(244,199,120,.05), transparent 70%),
+      linear-gradient(180deg, var(--bg0), var(--bg1) 45%, var(--bg2));
+    color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+  }
+  .wrap{max-width:1160px;margin:0 auto;padding:2.6rem clamp(1rem,4vw,2.2rem) 4rem;}
+
+  header{margin-bottom:1.6rem;}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.24em;text-transform:uppercase;
+           color:var(--next);opacity:.9;font-weight:600;}
+  h1{font-size:clamp(1.8rem,1.2rem+2.6vw,2.7rem);font-weight:800;letter-spacing:-.02em;margin:.55rem 0 .5rem;
+     text-wrap:balance;}
+  h1 .g{background:linear-gradient(92deg,var(--next),#F6E2A6);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .lede{color:var(--muted);max-width:60ch;line-height:1.55;font-size:1.03rem;}
+
+  .legend{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.3rem;}
+  .lg{font-family:var(--mono);font-size:.72rem;padding:.34rem .66rem;border-radius:100px;
+      border:1px solid var(--stroke);background:rgba(255,255,255,.03);color:var(--muted);
+      display:inline-flex;gap:.45rem;align-items:center;backdrop-filter:blur(6px);}
+  .lg .d{width:.6rem;height:.6rem;border-radius:50%;box-shadow:0 0 8px currentColor;}
+  .lg.built .d{color:var(--built);background:var(--built);} .lg.next .d{color:var(--next);background:var(--next);}
+  .lg.partial .d{color:var(--partial);background:var(--partial);} .lg.defer .d{color:var(--defer);background:var(--defer);}
+  .hint{font-family:var(--mono);font-size:.7rem;color:var(--faint);margin-left:.2rem;}
+
+  /* ---- scene ---- */
+  .scene{position:relative;margin-top:1.8rem;}
+  .wires{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:visible;}
+  .track{fill:none;stroke:var(--flow-track);stroke-width:1.6;stroke-linecap:round;transition:opacity .3s,stroke .3s;}
+  .wire{fill:none;stroke:var(--flow);stroke-width:1.8;stroke-linecap:round;stroke-dasharray:5 11;
+        animation:flow 1.15s linear infinite;transition:opacity .3s;}
+  .wire.dash{stroke-dasharray:2 8;opacity:.7;}
+  @keyframes flow{from{stroke-dashoffset:0}to{stroke-dashoffset:-16}}
+  .wire.hot{stroke:var(--flow-hot);stroke-width:2.3;animation-duration:.42s;
+            filter:drop-shadow(0 0 5px rgba(255,217,138,.9));}
+  .track.hot{stroke:rgba(255,217,138,.42);stroke-width:2;}
+  .scene.focusing .wire:not(.hot){opacity:.10;}
+  .scene.focusing .track:not(.hot){opacity:.04;}
+
+  .graph{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:64px;}
+  .row{display:flex;justify-content:center;flex-wrap:wrap;gap:20px;width:100%;}
+  .row.wide{gap:16px;}
+
+  .node{
+    position:relative;background:var(--glass);border:1px solid var(--stroke);border-radius:16px;
+    padding:.85rem 1rem;min-width:150px;max-width:210px;backdrop-filter:blur(14px) saturate(1.1);
+    box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 14px 34px rgba(0,0,0,.4);
+    transition:transform .25s cubic-bezier(.2,.7,.3,1),border-color .25s,box-shadow .25s;
+    cursor:default;overflow:hidden;
+  }
+  .node::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
+               background:linear-gradient(150deg,rgba(255,255,255,.06),transparent 42%);}
+  .node:hover{transform:translateY(-3px);border-color:var(--stroke-2);
+              box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 20px 46px rgba(0,0,0,.5);}
+  .node .rail{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--defer));opacity:.9;}
+  .node .nt{font-weight:750;font-size:.92rem;letter-spacing:-.01em;color:var(--c,var(--text));display:flex;align-items:center;gap:.35rem;}
+  .node .nd{color:var(--muted);font-size:.76rem;line-height:1.4;margin-top:.25rem;}
+  .node .ns{font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;
+            color:var(--c,var(--faint));opacity:.85;margin-top:.5rem;display:block;}
+
+  .n-built{--c:var(--built);} .n-next{--c:var(--next);} .n-partial{--c:var(--partial);}
+  .n-defer{--c:var(--defer);} .n-brain{--c:var(--brain);}
+
+  .node.star{border-color:rgba(244,199,120,.5);animation:star 2.6s ease-in-out infinite;}
+  @keyframes star{0%,100%{box-shadow:0 0 0 1px rgba(244,199,120,.35),0 14px 34px rgba(0,0,0,.4),0 0 22px rgba(244,199,120,.16)}
+                  50%{box-shadow:0 0 0 1px rgba(244,199,120,.65),0 14px 34px rgba(0,0,0,.4),0 0 34px rgba(244,199,120,.34)}}
+  .node.star .nt .sp{font-size:.8em;}
+
+  .tierlab{position:absolute;left:-8px;transform:translateX(-100%);top:50%;margin-top:-.6rem;
+           font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
+           color:var(--faint);white-space:nowrap;writing-mode:horizontal-tb;}
+  .rowwrap{position:relative;width:100%;display:flex;justify-content:center;}
+
+  /* ---- laws ---- */
+  .laws{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.9rem;margin-top:3.2rem;}
+  .law{background:var(--glass-2);border:1px solid var(--stroke);border-radius:14px;padding:1rem 1.1rem;
+       backdrop-filter:blur(12px);}
+  .law .ln{font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;color:var(--next);font-weight:700;}
+  .law .lt{font-weight:750;font-size:.98rem;margin:.32rem 0 .32rem;color:var(--text);}
+  .law .ld{color:var(--muted);font-size:.84rem;line-height:1.5;}
+
+  footer{margin-top:2.6rem;color:var(--faint);font-family:var(--mono);font-size:.74rem;
+         border-top:1px solid var(--stroke);padding-top:1.2rem;}
+
+  @media (prefers-reduced-motion:reduce){
+    .wire{animation:none;stroke-dasharray:none;opacity:.5;}
+    .node.star{animation:none;}
+    .wire.hot{animation:none;}
+  }
+  @media (max-width:640px){ .node{min-width:132px;max-width:46vw;padding:.7rem .8rem;} .graph{gap:52px;} }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">ArthaAI · Live Architecture</span>
+    <h1>The system, <span class="g">with the data moving</span>.</h1>
+    <p class="lede">The finalized ArthaAI architecture as a live infographic — every component is a node, every connector is animated data in transit. Hover any node to light up its active paths.</p>
+    <div class="legend">
+      <span class="lg built"><span class="d"></span>Running</span>
+      <span class="lg next"><span class="d"></span>Build next</span>
+      <span class="lg partial"><span class="d"></span>Partial</span>
+      <span class="lg defer"><span class="d"></span>Deferred</span>
+      <span class="hint">↳ hover a node</span>
+    </div>
+  </header>
+
+  <div class="scene">
+    <svg class="wires" aria-hidden="true"></svg>
+    <div class="graph">
+
+      <div class="rowwrap"><span class="tierlab">Tier 1 · Ingress</span>
+        <div class="row">
+          <div class="node n-built" data-id="user"><span class="rail"></span><div class="nt">User / Investor</div><div class="nd">Asks to analyse a ticker.</div><span class="ns">entry</span></div>
+          <div class="node n-built" data-id="dash"><span class="rail"></span><div class="nt">Web Dashboard</div><div class="nd">Verdict · sizing · candles.</div><span class="ns">running</span></div>
+          <div class="node n-built" data-id="gw"><span class="rail"></span><div class="nt">FastAPI Gateway</div><div class="nd">Token auth · rate limit.</div><span class="ns">running</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap"><span class="tierlab">Tier 2 · Core</span>
+        <div class="row">
+          <div class="node n-built" data-id="orch"><span class="rail"></span><div class="nt">LangGraph Orchestrator</div><div class="nd">Deterministic DAG · GraphState.</div><span class="ns">running</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap">
+        <div class="row wide">
+          <div class="node n-built" data-id="dba"><span class="rail"></span><div class="nt">DB_Agent</div><div class="nd">SMA · RSI · trend.</div><span class="ns">running</span></div>
+          <div class="node n-next star" data-id="quant"><span class="rail"></span><div class="nt"><span class="sp">★</span> Quant_Agent</div><div class="nd">Alpha-Zoo factors → signal model.</div><span class="ns">build next</span></div>
+          <div class="node n-partial" data-id="news"><span class="rail"></span><div class="nt">News_Agent</div><div class="nd">Qdrant hybrid search.</div><span class="ns">partial</span></div>
+          <div class="node n-defer" data-id="alt"><span class="rail"></span><div class="nt">Alt_Agent</div><div class="nd">Satellite / cargo.</div><span class="ns">deferred</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap"><span class="tierlab">Persistence</span>
+        <div class="row">
+          <div class="node n-built" data-id="tsdb"><span class="rail"></span><div class="nt">TimescaleDB</div><div class="nd">OHLCV hypertable.</div><span class="ns">running</span></div>
+          <div class="node n-built" data-id="qdr"><span class="rail"></span><div class="nt">Qdrant</div><div class="nd">News vectors.</div><span class="ns">running</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap">
+        <div class="row">
+          <div class="node n-built" data-id="state"><span class="rail"></span><div class="nt">StateStore</div><div class="nd">Findings converge here.</div><span class="ns">running</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap">
+        <div class="row">
+          <div class="node n-brain" data-id="brain"><span class="rail"></span><div class="nt">Master Reasoning LLM</div><div class="nd">Explains &amp; resolves conflicts. Gemini → local → Claude → offline.</div><span class="ns">running · explains only</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap"><span class="tierlab">Tier 3 · Sizing</span>
+        <div class="row">
+          <div class="node n-built" data-id="human"><span class="rail"></span><div class="nt">Human Gate</div><div class="nd">Approves before action.</div><span class="ns">running</span></div>
+          <div class="node n-built" data-id="asset"><span class="rail"></span><div class="nt">Asset Manager</div><div class="nd">Kelly + hard 5% cap.</div><span class="ns">running</span></div>
+          <div class="node n-next" data-id="gate"><span class="rail"></span><div class="nt">Backtest Gate</div><div class="nd">Must beat buy &amp; hold.</div><span class="ns">governs</span></div>
+        </div>
+      </div>
+
+      <div class="rowwrap"><span class="tierlab">Tier 4 · Action</span>
+        <div class="row">
+          <div class="node n-built" data-id="exec"><span class="rail"></span><div class="nt">Paper Execution</div><div class="nd">Kill switch · stop-loss · drawdown breaker.</div><span class="ns">running · paper</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="laws">
+    <div class="law"><div class="ln">LAW 1</div><div class="lt">Numbers are deterministic; the LLM only explains.</div><div class="ld">Every figure that sizes a trade is computed in code and backtestable — never forecast by the model.</div></div>
+    <div class="law"><div class="ln">LAW 2</div><div class="lt">A reproducible graph, not an agent free-loop.</div><div class="ld">Same nodes, same order, every run. Predictable cost, auditable path.</div></div>
+    <div class="law"><div class="ln">LAW 3</div><div class="lt">Nothing is trusted until it beats buy &amp; hold.</div><div class="ld">The backtest gate governs promotion downstream. No real money before it.</div></div>
+  </div>
+
+  <footer>ArthaAI · live architecture · decision-support only, paper context, not investment advice.</footer>
+</div>
+
+<script>
+(function(){
+  var SVGNS="http://www.w3.org/2000/svg";
+  // [from, to, type]  type: "" normal | "dash" governance/approval
+  var edges=[
+    ["user","dash"],["dash","gw"],["gw","orch"],
+    ["orch","dba"],["orch","quant"],["orch","news"],["orch","alt"],
+    ["dba","tsdb","dash"],["quant","tsdb","dash"],["news","qdr","dash"],
+    ["dba","state"],["quant","state"],["news","state"],["alt","state"],
+    ["state","brain"],["brain","asset"],
+    ["human","asset","dash"],["gate","asset","dash"],["gate","exec","dash"],
+    ["asset","exec"]
+  ];
+  var graph=document.querySelector(".graph");
+  var svg=document.querySelector(".wires");
+
+  function center(el,gr){
+    var r=el.getBoundingClientRect();
+    return {x:r.left+r.width/2-gr.left, y:r.top+r.height/2-gr.top};
+  }
+  function build(){
+    var gr=graph.getBoundingClientRect();
+    svg.setAttribute("width",gr.width);
+    svg.setAttribute("height",gr.height);
+    svg.setAttribute("viewBox","0 0 "+gr.width+" "+gr.height);
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+    edges.forEach(function(e,i){
+      var a=document.querySelector('[data-id="'+e[0]+'"]');
+      var b=document.querySelector('[data-id="'+e[1]+'"]');
+      if(!a||!b) return;
+      var p1=center(a,gr), p2=center(b,gr);
+      var midY=(p1.y+p2.y)/2;
+      var d="M "+p1.x+" "+p1.y+" C "+p1.x+" "+midY+", "+p2.x+" "+midY+", "+p2.x+" "+p2.y;
+
+      var track=document.createElementNS(SVGNS,"path");
+      track.setAttribute("d",d); track.setAttribute("class","track"+(e[2]?" "+e[2]:""));
+      track.dataset.from=e[0]; track.dataset.to=e[1];
+      svg.appendChild(track);
+
+      var wire=document.createElementNS(SVGNS,"path");
+      wire.setAttribute("d",d); wire.setAttribute("class","wire"+(e[2]?" "+e[2]:""));
+      wire.dataset.from=e[0]; wire.dataset.to=e[1];
+      wire.style.animationDelay=((i%7)*-0.14)+"s";
+      svg.appendChild(wire);
+    });
+  }
+
+  var scene=document.querySelector(".scene");
+  function focus(id,on){
+    scene.classList.toggle("focusing",on);
+    var sel='.wires [data-from="'+id+'"], .wires [data-to="'+id+'"]';
+    document.querySelectorAll(sel).forEach(function(p){ p.classList.toggle("hot",on); });
+  }
+  document.querySelectorAll(".node").forEach(function(n){
+    var id=n.dataset.id;
+    n.addEventListener("mouseenter",function(){focus(id,true);});
+    n.addEventListener("mouseleave",function(){focus(id,false);});
+  });
+
+  var raf;
+  function rebuild(){ cancelAnimationFrame(raf); raf=requestAnimationFrame(build); }
+  window.addEventListener("resize",rebuild);
+  window.addEventListener("load",build);
+  if(document.readyState!=="loading") build(); else document.addEventListener("DOMContentLoaded",build);
+  // fonts/layout settle
+  setTimeout(build,120); setTimeout(build,600);
+})();
+</script>

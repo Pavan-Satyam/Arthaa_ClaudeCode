@@ -6,6 +6,7 @@ see the published doc). Runs end-to-end on a laptop with free data and no API ke
 
 **Docs**
 - [`arthaai-architecture.html`](arthaai-architecture.html) — the finalized architecture (status-annotated)
+- [`arthaai-architecture-live.html`](arthaai-architecture-live.html) — the same architecture as an animated, interactive node graph
 - [`AI_ENGINEER_HANDOFF.md`](AI_ENGINEER_HANDOFF.md) — AI/ML handoff: prompts, provider layer, RAG, evaluation, known gaps
 - [`analyze-walkthrough.html`](analyze-walkthrough.html) — non-technical walkthrough for product/ops stakeholders
 
