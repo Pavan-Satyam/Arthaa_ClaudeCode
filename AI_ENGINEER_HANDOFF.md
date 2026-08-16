@@ -1,6 +1,7 @@
 # ArthaAI — AI/ML Engineer Handoff
 
-Companion to [HANDOFF.md](HANDOFF.md) (which covers the system flow end to end).
+For the end-to-end system flow, see [`README.md`](README.md) and the annotated
+[`arthaai-architecture.html`](arthaai-architecture.html).
 **This doc covers the model surface only:** prompts, the LLM provider layer, the
 RAG pipeline, evaluation, and where the "intelligence" actually lives.
 
