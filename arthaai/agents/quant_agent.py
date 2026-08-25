@@ -1,7 +1,10 @@
 """Quant Agent — studies mathematical financial models.
 
-Computes annualised return/variance/volatility and the discrete-Kelly inputs
-(win probability W, win/loss ratio R) that the Asset Manager consumes.
+Computes annualised return/variance/volatility and the signal-conditioned
+discrete-Kelly inputs (win probability W, win/loss ratio R) that the Asset
+Manager consumes. W and R are derived from the trend signal's historical hit
+rate and payoff, not the asset's unconditional daily returns, so they reflect
+the signal's actual edge.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ def run(symbol: str) -> dict:
         return {"available": False, "reason": "no OHLCV in TimescaleDB — run ingest first."}
     close = df["close"]
     stats = indicators.annualised_stats(close)
-    w, r = indicators.win_loss_ratio(close)
+    w, r = indicators.signal_kelly_stats(close)
     return {
         "available": True,
         "mu": round(stats["mu"], 4),

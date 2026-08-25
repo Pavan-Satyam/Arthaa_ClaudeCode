@@ -109,7 +109,7 @@ def analyze(symbol: str, skip_ingest: bool = typer.Option(False, help="Use exist
     ev = Table(title=f"Agent evidence · {symbol}", show_header=True, header_style="bold")
     ev.add_column("Agent"); ev.add_column("Signal"); ev.add_column("Detail")
     if db.get("available"):
-        ev.add_row("DB_Agent", db["trend"], f"close {db['last_close']} · RSI {db['rsi14'] and round(db['rsi14'],1)} · {db['bars']} bars")
+        ev.add_row("DB_Agent", db["trend"], f"close {db['last_close']} · RSI {db['rsi14'] and round(db['rsi14'],1)} · ADX {db.get('adx14','—')} ({db.get('regime','')}) · {db['bars']} bars")
     if quant.get("available"):
         ev.add_row("Quant", f"μ {quant['mu']:+.2%}", f"σ {quant['sigma']:.2%} · W {quant['win_prob']:.2f} · R {quant['win_loss_ratio']:.2f}")
     if news.get("available"):
@@ -176,19 +176,27 @@ def execute(
 
 
 @app.command()
-def backtest(symbol: str, warmup: int = 60, limit: int = 500) -> None:
+def backtest(
+    symbol: str,
+    warmup: int = 60,
+    limit: int = 500,
+    signal: str = typer.Option("trend", help="trend (SMA-cross) | breakout (Donchian 55/20)"),
+    adx: float = typer.Option(0.0, help="ADX regime gate for breakout (e.g. 25 = only enter when trending)"),
+) -> None:
     """Walk-forward backtest with look-ahead guards (offline evaluation)."""
     from arthaai.backtest import run_backtest
 
     with console.status(f"[bold]backtesting {symbol.upper()}…"):
-        res = run_backtest(symbol, warmup=warmup, limit=limit)
-    edge = res.total_return - res.buy_hold_return
-    col = "green" if edge > 0 else "red"
-    t = Table(title=f"Backtest · {res.symbol}", show_header=False)
+        res = run_backtest(symbol, warmup=warmup, limit=limit, signal=signal, adx_threshold=adx)
+    t = Table(title=f"Backtest · {res.symbol} · {signal}" + (f" · ADX≥{adx:g}" if adx else ""), show_header=False)
     t.add_column("k"); t.add_column("v", justify="right")
     t.add_row("bars / trades", f"{res.bars} / {res.trades}")
-    t.add_row("strategy return", f"{res.total_return:+.2%}")
+    t.add_row("strategy return (Kelly)", f"{res.total_return:+.2%}")
+    t.add_row("long/short (100%)", f"{res.long_short_return:+.2%}")
+    t.add_row("long-only (100%)", f"{res.long_only_return:+.2%}")
     t.add_row("buy & hold", f"{res.buy_hold_return:+.2%}")
+    edge = res.long_short_return - res.buy_hold_return
+    col = "green" if edge > 0 else "red"
     t.add_row("edge vs B&H", f"[{col}]{edge:+.2%}[/]")
     t.add_row("Sharpe (ann.)", f"{res.sharpe:.2f}")
     t.add_row("max drawdown", f"{res.max_drawdown:.2%}")

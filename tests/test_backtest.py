@@ -17,7 +17,8 @@ def test_no_drawdown_when_monotonic():
 
 
 def test_result_serialises():
-    r = BacktestResult("GLD", 500, 120, 0.12, 0.08, 1.1, -0.2, 0.55)
+    r = BacktestResult("GLD", 500, 120, 0.12, 0.08, 1.1, -0.2, 0.55, 0.10, 0.18)
     d = r.as_dict()
     assert d["symbol"] == "GLD"
     assert d["total_return"] == 0.12 and d["hit_rate"] == 0.55
+    assert d["long_short_return"] == 0.10 and d["long_only_return"] == 0.18

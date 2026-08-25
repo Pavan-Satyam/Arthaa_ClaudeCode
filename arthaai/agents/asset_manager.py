@@ -58,14 +58,20 @@ def size(quant: dict, *, confidence: float | None = None) -> Allocation:
     d_kelly = discrete_kelly(w, r)
     c_kelly = continuous_kelly(quant.get("mu", 0.0), quant.get("variance", 0.0), s.risk_free_rate)
 
-    # Prefer the continuous form for continuous assets; clamp negatives to 0 (no shorting here).
-    raw = max(0.0, c_kelly if quant.get("variance", 0) > 0 else d_kelly)
+    # Directional signals (trend / breakout) are discrete win/loss bets, so the
+    # discrete Kelly fraction is the sound sizing driver. Continuous Kelly is
+    # retained only as a reported cross-check: with annualised mu/variance it
+    # routinely exceeds 100% and would let the policy cap do all the sizing,
+    # hiding the signal's (lack of) edge. A negative or zero discrete edge sizes
+    # to flat (no shorting here) rather than pumping leverage via continuous Kelly.
+    raw = max(0.0, d_kelly)
     fractional = raw * s.kelly_fraction
 
     final = min(fractional, s.max_single_instrument)
     capped = final < fractional
     rationale = (
-        f"quarter-Kelly ({s.kelly_fraction:g}x) applied to smooth drawdowns; "
+        f"quarter-Kelly ({s.kelly_fraction:g}x) on discrete f={d_kelly:.3f} "
+        f"(W={w:.2f}, R={r:.2f}); continuous f*={c_kelly:.2f} (informational); "
         + (
             f"policy cap of {s.max_single_instrument:.0%} single-instrument exposure enforced."
             if capped
