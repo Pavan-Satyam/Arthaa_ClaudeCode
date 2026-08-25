@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from slowapi import Limiter
@@ -41,21 +41,45 @@ class AnalyzeResponse(BaseModel):
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard() -> str:
+def dashboard(response: Response) -> str:
     """Tier 1 UI — asset page with price, candles, verdict and allocation.
 
-    The gateway injects a valid bearer token into the page it serves, so the
-    browser session is trusted without the user handling a credential.
+    The gateway sets the bearer token as an httpOnly cookie so the browser
+    session is trusted without exposing the credential in the page source.
+    JavaScript never touches the token; fetch() sends the cookie automatically.
     """
     from arthaai.security import vault
+    from arthaai.config import get_settings
 
-    token = vault.get_secret("arthaai", "gateway_token", env="ARTHAAI_GATEWAY_TOKEN") or "dev-token"
-    return _DASHBOARD.read_text(encoding="utf-8").replace("__ARTHAAI_TOKEN__", token)
+    s = get_settings()
+    token = vault.get_secret("arthaai", "gateway_token", env="ARTHAAI_GATEWAY_TOKEN")
+    if not token:
+        if s.dev_mode:
+            token = "dev-token"
+        else:
+            raise RuntimeError(
+                "ARTHAAI_GATEWAY_TOKEN is not set and dev_mode is False — "
+                "refusing to serve the dashboard with a guessable fallback credential."
+            )
+    response.set_cookie(
+        key="arthaai_token", value=token, httponly=True, samesite="strict",
+        secure=not s.dev_mode,  # True in production (requires TLS)
+    )
+    return _DASHBOARD.read_text(encoding="utf-8")
 
 
 @app.get("/ohlcv/{symbol}")
-def ohlcv(symbol: str, limit: int = 120) -> dict:
-    """Recent OHLCV bars for the dashboard chart; ingests on demand if missing."""
+def ohlcv(
+    symbol: str,
+    limit: int = 120,
+    principal: Principal = Depends(require_principal),
+) -> dict:
+    """Recent OHLCV bars for the dashboard chart; ingests on demand if missing.
+
+    Requires a bearer token (same as /analyze). The dashboard's httpOnly cookie
+    is sent automatically by the browser, so the chart loads without the user
+    handling a credential.
+    """
     from arthaai.data import ingest as ingest_mod
     from arthaai.db import timescale
 

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     max_single_instrument: float = 0.05   # hard cap per instrument
     risk_free_rate: float = 0.04
 
+    # Gateway security
+    dev_mode: bool = True                # False in production: enforce TLS cookies, reject dev-token fallback
+
     @property
     def timescale_dsn(self) -> str:
         return (

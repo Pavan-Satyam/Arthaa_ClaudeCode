@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import Header, HTTPException, status
+from fastapi import Cookie, Header, HTTPException, status
 
 from arthaai.security import vault
 
@@ -25,18 +25,30 @@ class Principal:
     scopes: tuple[str, ...]
 
 
-def require_principal(authorization: str | None = Header(default=None)) -> Principal:
-    if not authorization or not authorization.lower().startswith("bearer "):
+def require_principal(
+    authorization: str | None = Header(default=None),
+    arthaai_token: str | None = Cookie(default=None),
+) -> Principal:
+    """Authenticate via bearer header (API clients) or httpOnly cookie (dashboard).
+
+    The dashboard endpoint sets an httpOnly cookie so browser sessions are
+    trusted without exposing the token in JavaScript. API clients use the
+    standard Authorization: Bearer header.
+    """
+    token: str | None = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    elif arthaai_token:
+        token = arthaai_token
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing bearer token (OAuth 2.1 / MCP access token).",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = authorization.split(" ", 1)[1].strip()
     # Credential comes from Vault (falls back to env if Vault is unavailable).
     expected = vault.get_secret("arthaai", "gateway_token", env="ARTHAAI_GATEWAY_TOKEN")
     if expected and token != expected:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token.")
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Empty token.")
     return Principal(subject="investor", scopes=("analyze:read",))

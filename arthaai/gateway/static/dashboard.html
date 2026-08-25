@@ -77,10 +77,9 @@
 </div>
 
 <script>
-// Token injected by the gateway that serves this page — the browser session is
-// already trusted, so the user never types a credential. (For a multi-user
-// deployment, replace this with a real login/session.)
-const TOKEN = "__ARTHAAI_TOKEN__";
+// The gateway sets an httpOnly cookie on this page, so fetch() sends the
+// credential automatically — JavaScript never touches the token. (For a
+// multi-user deployment, replace the cookie with a real login/session.)
 const $ = (id) => document.getElementById(id);
 
 function drawCandles(bars) {
@@ -105,7 +104,8 @@ function drawCandles(bars) {
 }
 
 async function loadChart(sym) {
-  const r = await fetch(`/ohlcv/${sym}?limit=120`);
+  const r = await fetch(`/ohlcv/${sym}?limit=120`, { credentials: "same-origin" });
+  if (!r.ok) return;
   const d = await r.json();
   drawCandles(d.bars);
   if (d.bars.length) $("last").textContent = "last " + d.bars[d.bars.length-1].close.toFixed(2);
@@ -113,12 +113,11 @@ async function loadChart(sym) {
 
 async function analyze() {
   const sym = $("sym").value.trim().replace(/^\.+/, "").toUpperCase() || "GLD";
-  const tok = TOKEN;
   $("go").disabled = true; $("status").textContent = "running multi-agent pipeline… (fetching data)";
   try {
     // no skip_ingest: fetch data on demand so any ticker works from the UI
     const r = await fetch(`/analyze/${sym}`, {
-      method:"POST", headers:{ "Authorization":"Bearer "+tok }
+      method:"POST", credentials: "same-origin"
     });
     if (!r.ok) { $("status").textContent = "error "+r.status+" ("+(r.status===401?"bad token":"see server")+")"; return; }
     const d = await r.json();
