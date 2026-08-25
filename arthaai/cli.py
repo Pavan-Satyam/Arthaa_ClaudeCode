@@ -109,9 +109,11 @@ def analyze(symbol: str, skip_ingest: bool = typer.Option(False, help="Use exist
     ev = Table(title=f"Agent evidence · {symbol}", show_header=True, header_style="bold")
     ev.add_column("Agent"); ev.add_column("Signal"); ev.add_column("Detail")
     if db.get("available"):
-        ev.add_row("DB_Agent", db["trend"], f"close {db['last_close']} · RSI {db['rsi14'] and round(db['rsi14'],1)} · ADX {db.get('adx14','—')} ({db.get('regime','')}) · {db['bars']} bars")
+        sig = db.get("signal_class", "trend")
+        ev.add_row("DB_Agent", db["trend"], f"close {db['last_close']} · RSI {db['rsi14'] and round(db['rsi14'],1)} · ADX {db.get('adx14','—')} ({db.get('regime','')}) · [{sig}] · {db['bars']} bars")
     if quant.get("available"):
-        ev.add_row("Quant", f"μ {quant['mu']:+.2%}", f"σ {quant['sigma']:.2%} · W {quant['win_prob']:.2f} · R {quant['win_loss_ratio']:.2f}")
+        sig = quant.get("signal_class", "trend")
+        ev.add_row("Quant", f"μ {quant['mu']:+.2%}", f"σ {quant['sigma']:.2%} · W {quant['win_prob']:.2f} · R {quant['win_loss_ratio']:.2f} · [{sig}]")
     if news.get("available"):
         ev.add_row("News_Agent", news["label"], f"{news['count']} items · sentiment {news['avg_sentiment']:+.2f}")
     if alt.get("available"):
@@ -214,6 +216,51 @@ def consume(max_messages: int = 10) -> None:
     console.print(f"consumed [bold]{n}[/] ingest events.")
 
 
+@app.command()
+def compare(
+    symbols: str = typer.Option("GLD,SLV,USO,XOM,AAPL", help="Comma-separated symbols to compare."),
+    limit: int = 500,
+    adx: float = typer.Option(25.0, help="ADX gate for breakout (0 = no gate)."),
+) -> None:
+    """Compare trend vs breakout signals across multiple assets."""
+    from arthaai.backtest import run_backtest
+
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    t = Table(title="Signal comparison · trend vs breakout", show_header=True, header_style="bold")
+    t.add_column("Symbol")
+    t.add_column("Signal")
+    t.add_column("Strat Ret", justify="right")
+    t.add_column("L/S (100%)", justify="right")
+    t.add_column("L/O (100%)", justify="right")
+    t.add_column("B&H", justify="right")
+    t.add_column("Sharpe", justify="right")
+    t.add_column("MaxDD", justify="right")
+    t.add_column("Hit%", justify="right")
+
+    for sym in sym_list:
+        for sig in ("trend", "breakout"):
+            try:
+                res = run_backtest(sym, limit=limit, signal=sig, adx_threshold=adx if sig == "breakout" else 0.0)
+            except Exception as exc:  # noqa: BLE001
+                t.add_row(sym, sig, "[red]error[/]", str(exc)[:40], "", "", "", "", "")
+                continue
+            edge = res.long_short_return - res.buy_hold_return
+            edge_col = "green" if edge > 0 else "red"
+            t.add_row(
+                sym if sig == "trend" else "",
+                sig,
+                f"{res.total_return:+.2%}",
+                f"[{edge_col}]{res.long_short_return:+.2%}[/]",
+                f"{res.long_only_return:+.2%}",
+                f"{res.buy_hold_return:+.2%}",
+                f"{res.sharpe:.2f}",
+                f"{res.max_drawdown:.2%}",
+                f"{res.hit_rate:.0%}",
+            )
+    console.print(t)
+    console.print("[dim]L/S = long/short 100% exposure · L/O = long-only 100% · Strat = Kelly-sized · ADX gate for breakout only.[/]")
+
+
 @app.command("seed-secrets")
 def seed_secrets(gateway_token: str = "dev-token") -> None:
     """Write dev secrets (gateway token, ANTHROPIC_API_KEY if set) into Vault."""
@@ -270,22 +317,29 @@ def eval(
         report = run_eval(provider=provider)
 
     t = Table(title="LLM Eval · golden fixtures", show_header=True, header_style="bold")
-    t.add_column("Fixture"); t.add_column("Expected"); t.add_column("Actual"); t.add_column("Conf"); t.add_column("Source"); t.add_column("Rationale"); t.add_column("Pass")
+    t.add_column("Fixture"); t.add_column("Expected"); t.add_column("Actual"); t.add_column("Conf"); t.add_column("Band"); t.add_column("Source"); t.add_column("Rationale"); t.add_column("Pass")
     for r in report.results:
-        ok = r.direction_correct and r.rationale_ok
+        ok = r.direction_correct and r.rationale_ok and r.confidence_band_ok
         t.add_row(
-            r.name, r.expected, r.actual, f"{r.confidence:.0%}", r.source,
+            r.name, r.expected, r.actual, f"{r.confidence:.0%}",
+            "[green]ok[/]" if r.confidence_band_ok else "[red]x[/]",
+            r.source,
             "[green]yes[/]" if r.rationale_ok else "[red]no[/]",
             "[green]PASS[/]" if ok else "[red]FAIL[/]",
         )
     console.print(t)
 
+    calib = report.calibration_score
+    calib_str = f"[bold]{calib:+.2f}[/]  (1=perfect, 0=random, -1=anti)" if calib is not None else "[dim]n/a (no variance — all verdicts same correctness)[/]"
+
     console.print(Panel(
-        f"direction accuracy: [bold]{report.direction_accuracy:.0%}[/]\n"
-        f"rationale rate:     [bold]{report.rationale_rate:.0%}[/]\n"
-        f"avg confidence:     [bold]{report.avg_confidence:.0%}[/]\n"
-        f"sources used:       {', '.join(f'{k} ({v})' for k, v in report.sources_used.items())}\n"
-        f"overall:            {'[green bold]PASS[/]' if report.passed else '[red bold]FAIL[/]'}",
+        f"direction accuracy:     [bold]{report.direction_accuracy:.0%}[/]\n"
+        f"rationale rate:         [bold]{report.rationale_rate:.0%}[/]\n"
+        f"confidence band match:  [bold]{report.confidence_band_accuracy:.0%}[/]\n"
+        f"calibration score:      {calib_str}\n"
+        f"avg confidence:         [bold]{report.avg_confidence:.0%}[/]\n"
+        f"sources used:           {', '.join(f'{k} ({v})' for k, v in report.sources_used.items())}\n"
+        f"overall:                {'[green bold]PASS[/]' if report.passed else '[red bold]FAIL[/]'}",
         title="Eval scorecard", border_style="cyan" if report.passed else "red",
     ))
 

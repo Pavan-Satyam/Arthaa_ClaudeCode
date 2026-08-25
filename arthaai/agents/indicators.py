@@ -6,10 +6,19 @@ never by the LLM. Pure functions over an OHLCV frame.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
+
+# --- Shared signal-selector constants (single source of truth) -------------
+# ADX ≥ this threshold → trending regime → use Donchian breakout; else trend.
+BREAKOUT_ADX_THRESHOLD = 25.0
+# Donchian breakout windows (slow Turtle system 1): 55-day entry, 20-day exit.
+# Used by both breakout_signal (live) and signal_kelly_stats (Kelly sizing)
+# so the live signal and its historical hit-rate/payoff describe the same system.
+BREAKOUT_ENTRY_WINDOW = 55
+BREAKOUT_EXIT_WINDOW = 20
 
 
 def sma(close: pd.Series, window: int) -> float | None:
@@ -133,8 +142,10 @@ def wr_from_tallies(wins: int, losses: int, win_sum: float, loss_sum: float) -> 
 
 
 def signal_kelly_stats(
-    close: pd.Series, signal_fn: "Callable[..., tuple[str, float]] | None" = None,
-    warmup: int = 60,
+    close: pd.Series, signal_fn: Callable[..., tuple[str, float]] | None = None,
+    warmup: int = 60, *,
+    high: pd.Series | None = None, low: pd.Series | None = None,
+    signal_class: str = "trend",
 ) -> tuple[float, float]:
     """Signal-conditioned (win_prob W, win/loss ratio R) for discrete Kelly.
 
@@ -147,11 +158,14 @@ def signal_kelly_stats(
 
     These are the correct inputs for discrete Kelly on a directional signal:
     unlike the asset's unconditional daily win rate, they reflect the signal's
-    actual edge (or lack of it). Defaults to ``trend_signal``, evaluated via the
-    vectorized ``_trend_signal_series`` (O(n)). A custom ``signal_fn`` must
-    accept a single ``pd.Series`` positional argument and return ``(label, score)``;
-    note that ``breakout_signal`` does NOT fit this signature (it requires
-    ``high, low, close``) and would need a ``functools.partial`` wrapper.
+    actual edge (or lack of it).
+
+    Signal class selection:
+      - ``signal_class="trend"`` (default): uses ``_trend_signal_series`` (O(n)).
+      - ``signal_class="breakout"``: requires ``high`` and ``low`` — uses
+        ``breakout_positions`` (O(n)) to get the full direction series, then
+        converts to labels. This avoids O(n²) per-bar re-simulation.
+      - A custom ``signal_fn`` (accepting a single ``pd.Series``) overrides both.
     """
     c = close.reset_index(drop=True)
     n = len(c)
@@ -159,14 +173,24 @@ def signal_kelly_stats(
         return 0.5, 1.0
     rets = c.pct_change()
 
-    # Fast path: for the default trend signal, use the vectorized series to
-    # avoid O(n²) per-bar recomputation. Other signal_fns fall back to per-bar.
-    if signal_fn is None or signal_fn is trend_signal:
-        labels = _trend_signal_series(c)[0]
-    else:
+    # Resolve per-bar labels — vectorized where possible.
+    if signal_fn is not None and signal_fn is not trend_signal:
+        # Custom signal function (per-bar, O(n²))
         labels = [""] * n
         for t in range(warmup, n - 1):
             labels[t], _ = signal_fn(c.iloc[: t + 1])
+    elif signal_class == "breakout" and high is not None and low is not None:
+        # Breakout: use the full O(n) position series, convert to labels.
+        h = high.reset_index(drop=True)
+        l = low.reset_index(drop=True)
+        dirs = breakout_positions(h, l, c, entry_window=BREAKOUT_ENTRY_WINDOW, exit_window=BREAKOUT_EXIT_WINDOW)
+        labels = [
+            "bullish" if d == 1 else "bearish" if d == -1 else "neutral"
+            for d in dirs
+        ]
+    else:
+        # Default: vectorized trend signal (O(n))
+        labels = _trend_signal_series(c)[0]
 
     wins = losses = 0
     win_sum = loss_sum = 0.0
@@ -228,9 +252,7 @@ def breakout_positions(
         xh = h[i - j:i].max()
         px = c[i]
 
-        if pos == 1 and px < xl:
-            pos = 0
-        elif pos == -1 and px > xh:
+        if pos == 1 and px < xl or pos == -1 and px > xh:
             pos = 0
 
         if pos == 0:

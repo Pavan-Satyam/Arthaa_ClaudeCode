@@ -48,8 +48,8 @@ def dashboard(response: Response) -> str:
     session is trusted without exposing the credential in the page source.
     JavaScript never touches the token; fetch() sends the cookie automatically.
     """
-    from arthaai.security import vault
     from arthaai.config import get_settings
+    from arthaai.security import vault
 
     s = get_settings()
     token = vault.get_secret("arthaai", "gateway_token", env="ARTHAAI_GATEWAY_TOKEN")

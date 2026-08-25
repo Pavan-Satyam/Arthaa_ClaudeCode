@@ -18,7 +18,6 @@ import numpy as np
 import pandas as pd
 
 from arthaai.agents import asset_manager, indicators
-from arthaai.config import get_settings
 from arthaai.db import timescale
 
 
@@ -66,7 +65,6 @@ def run_backtest(
     high = df["high"].reset_index(drop=True)
     low = df["low"].reset_index(drop=True)
     fwd_ret = close.pct_change().shift(-1)  # day t earns day t+1's return
-    s = get_settings()
 
     # For the breakout signal, precompute the full position series once (O(n),
     # look-ahead-safe by construction); per-bar re-simulation would be O(n²).

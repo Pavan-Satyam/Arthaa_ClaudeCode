@@ -74,7 +74,7 @@ def test_signal_kelly_stats_bearish_wins_positive_r():
     rng = np.random.default_rng(99)
     rets = rng.normal(-0.005, 0.008, 260)  # strong negative drift
     down = _series(np.cumprod(1 + rets) * 100)
-    w, r = indicators.signal_kelly_stats(down)
+    _w, r = indicators.signal_kelly_stats(down)
     assert r > 0  # bearish wins must not corrupt the payoff ratio
 
 
@@ -101,3 +101,26 @@ def test_trend_signal_series_matches_per_bar():
         label_bar, score_bar = indicators.trend_signal(close.iloc[: t + 1])
         assert labels_vec[t] == label_bar, f"label mismatch at bar {t}"
         assert abs(scores_vec[t] - score_bar) < 0.002, f"score mismatch at bar {t}"
+
+
+def test_signal_kelly_stats_breakout_path():
+    # The breakout signal_class path must produce valid (W, R) when given
+    # high/low/close. It uses breakout_positions internally (O(n)).
+    rng = np.random.default_rng(55)
+    rets = rng.normal(0.003, 0.012, 260)
+    close = _series(np.cumprod(1 + rets) * 100)
+    high = close * (1 + np.abs(rng.normal(0, 0.005, 260)))
+    low = close * (1 - np.abs(rng.normal(0, 0.005, 260)))
+    w, r = indicators.signal_kelly_stats(close, high=high, low=low, signal_class="breakout")
+    assert 0.0 <= w <= 1.0
+    assert r > 0
+
+
+def test_signal_kelly_stats_breakout_needs_high_low():
+    # Without high/low, the breakout path must fall back to trend (not crash).
+    rng = np.random.default_rng(55)
+    close = _series(np.cumprod(1 + rng.normal(0.001, 0.012, 260)) * 100)
+    w, r = indicators.signal_kelly_stats(close, signal_class="breakout")
+    # Falls back to trend -> still valid
+    assert 0.0 <= w <= 1.0
+    assert r > 0

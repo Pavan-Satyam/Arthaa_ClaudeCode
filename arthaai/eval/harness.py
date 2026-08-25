@@ -22,17 +22,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from arthaai.agents.master_llm import Verdict, reason
+from arthaai.agents.master_llm import reason
 
 
 @dataclass
 class GoldenFixture:
-    """A known scenario with the expected verdict direction."""
+    """A known scenario with the expected verdict direction and confidence band."""
 
     name: str
     state: dict
     expected_direction: str
     description: str
+    expected_confidence_band: str = "medium"  # high (>0.7) | medium (0.5-0.7) | low (<0.5)
 
 
 @dataclass
@@ -46,6 +47,7 @@ class FixtureResult:
     source: str
     rationale_ok: bool
     direction_correct: bool
+    confidence_band_ok: bool = False
     notes: str = ""
 
 
@@ -58,12 +60,18 @@ class EvalReport:
     direction_accuracy: float = 0.0
     rationale_rate: float = 0.0
     avg_confidence: float = 0.0
+    confidence_band_accuracy: float = 0.0  # fraction where confidence falls in expected band
+    calibration_score: float = 0.0  # rank correlation: correct verdicts should have higher confidence
     sources_used: dict[str, int] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
-        """All fixtures must get direction right and have a rationale."""
-        return self.direction_accuracy == 1.0 and self.rationale_rate == 1.0
+        """All fixtures must get direction right, have a rationale, and be calibrated."""
+        return (
+            self.direction_accuracy == 1.0
+            and self.rationale_rate == 1.0
+            and self.confidence_band_accuracy >= 0.8
+        )
 
 
 def golden_fixtures() -> list[GoldenFixture]:
@@ -78,6 +86,7 @@ def golden_fixtures() -> list[GoldenFixture]:
             name="strong_bullish",
             description="All signals aligned bullish: strong trend, positive news, positive alt",
             expected_direction="bullish",
+            expected_confidence_band="high",
             state={
                 "symbol": "GLD",
                 "db": {"available": True, "trend": "bullish", "trend_score": 0.65, "rsi14": 58, "adx14": 28.0, "regime": "trending"},
@@ -90,6 +99,7 @@ def golden_fixtures() -> list[GoldenFixture]:
             name="strong_bearish",
             description="All signals aligned bearish: downtrend, negative news, negative alt",
             expected_direction="bearish",
+            expected_confidence_band="high",
             state={
                 "symbol": "XOM",
                 "db": {"available": True, "trend": "bearish", "trend_score": -0.55, "rsi14": 32, "adx14": 27.0, "regime": "trending"},
@@ -102,6 +112,7 @@ def golden_fixtures() -> list[GoldenFixture]:
             name="conflicting_neutral",
             description="Mixed signals: bullish trend but negative news and flat alt",
             expected_direction="neutral",
+            expected_confidence_band="medium",
             state={
                 "symbol": "AAPL",
                 "db": {"available": True, "trend": "bullish", "trend_score": 0.35, "rsi14": 62, "adx14": 18.0, "regime": "weak-trend"},
@@ -114,6 +125,7 @@ def golden_fixtures() -> list[GoldenFixture]:
             name="no_data",
             description="No evidence available at all",
             expected_direction="neutral",
+            expected_confidence_band="low",
             state={
                 "symbol": "UNKNOWN",
                 "db": {"available": False},
@@ -126,6 +138,7 @@ def golden_fixtures() -> list[GoldenFixture]:
             name="technical_only_bullish",
             description="Only technical signal available, strongly bullish, no news/alt",
             expected_direction="bullish",
+            expected_confidence_band="high",
             state={
                 "symbol": "SLV",
                 "db": {"available": True, "trend": "bullish", "trend_score": 0.50, "rsi14": 55, "adx14": 30.0, "regime": "trending"},
@@ -138,6 +151,7 @@ def golden_fixtures() -> list[GoldenFixture]:
             name="news_driven_bearish",
             description="Weak trend but strongly negative news dominates",
             expected_direction="bearish",
+            expected_confidence_band="medium",
             state={
                 "symbol": "TSLA",
                 "db": {"available": True, "trend": "neutral", "trend_score": -0.05, "rsi14": 48, "adx14": 15.0, "regime": "choppy"},
@@ -163,6 +177,51 @@ def _check_rationale(rationale: str) -> bool:
     return "i choose" in low and "because" in low
 
 
+def _confidence_band(conf: float) -> str:
+    """Map a confidence value to its band: high (>0.7) | medium (0.5-0.7) | low (<0.5).
+
+    Note: the offline reasoner's formula (0.5 + abs(score)/2) structurally
+    produces confidence >= 0.5, so "low" only appears when an LLM provider
+    returns sub-0.5 confidence — a sign of genuine uncertainty.
+    """
+    if conf > 0.7:
+        return "high"
+    if conf > 0.5:
+        return "medium"
+    return "low"
+
+
+def _calibration_score(results: list[FixtureResult]) -> float | None:
+    """Kendall tau-style rank correlation between confidence and correctness.
+
+    A well-calibrated model assigns higher confidence to correct verdicts.
+    Returns a value in [-1, 1]: 1 = perfectly calibrated, 0 = no relationship,
+    -1 = anti-calibrated. Returns ``None`` when correctness has no variance
+    (all verdicts correct or all wrong) — the metric is degenerate in that case
+    and reporting 0.0 ("random") would be misleading.
+    """
+    if len(results) < 2:
+        return None
+    # If all verdicts have the same correctness, calibration is undefined.
+    correctness_values = [int(r.direction_correct) for r in results]
+    if len(set(correctness_values)) < 2:
+        return None
+    concordant = 0
+    discordant = 0
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            ci, cj = results[i].confidence, results[j].confidence
+            ki, kj = correctness_values[i], correctness_values[j]
+            if ci == cj or ki == kj:
+                continue  # tie in confidence or correctness — no signal
+            if (ci > cj) == (ki > kj):
+                concordant += 1
+            else:
+                discordant += 1
+    total = concordant + discordant
+    return concordant / total - discordant / total if total > 0 else 0.0
+
+
 def run_eval(provider: str | None = None) -> EvalReport:
     """Run all golden fixtures and return a scorecard.
 
@@ -184,6 +243,8 @@ def run_eval(provider: str | None = None) -> EvalReport:
         verdict = reason(fx.state, fx.state.get("symbol", "UNKNOWN"))
         direction_correct = verdict.direction == fx.expected_direction
         rationale_ok = _check_rationale(verdict.rationale)
+        actual_band = _confidence_band(verdict.confidence)
+        band_ok = actual_band == fx.expected_confidence_band
         results.append(FixtureResult(
             name=fx.name,
             expected=fx.expected_direction,
@@ -192,13 +253,16 @@ def run_eval(provider: str | None = None) -> EvalReport:
             source=verdict.source,
             rationale_ok=rationale_ok,
             direction_correct=direction_correct,
+            confidence_band_ok=band_ok,
             notes=fx.description,
         ))
 
     report = EvalReport(results=results, total=len(results))
-    report.direction_accuracy = sum(r.direction_correct for r in results) / results.__len__() if results else 0.0
+    report.direction_accuracy = sum(r.direction_correct for r in results) / len(results) if results else 0.0
     report.rationale_rate = sum(r.rationale_ok for r in results) / len(results) if results else 0.0
     report.avg_confidence = sum(r.confidence for r in results) / len(results) if results else 0.0
+    report.confidence_band_accuracy = sum(r.confidence_band_ok for r in results) / len(results) if results else 0.0
+    report.calibration_score = _calibration_score(results)
     for r in results:
         report.sources_used[r.source] = report.sources_used.get(r.source, 0) + 1
     return report
