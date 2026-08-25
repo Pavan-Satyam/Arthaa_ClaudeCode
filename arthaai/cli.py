@@ -259,5 +259,39 @@ def serve(port: int = 8000) -> None:
     uvicorn.run("arthaai.gateway.app:app", host="0.0.0.0", port=port)
 
 
+@app.command()
+def eval(
+    provider: str = typer.Option(None, help="Force a single provider (offline|anthropic|gemini|local). Default: configured chain."),
+) -> None:
+    """Run golden-fixture eval against the Master Reasoning LLM."""
+    from arthaai.eval.harness import run_eval
+
+    with console.status("[bold]running golden-fixture eval…"):
+        report = run_eval(provider=provider)
+
+    t = Table(title="LLM Eval · golden fixtures", show_header=True, header_style="bold")
+    t.add_column("Fixture"); t.add_column("Expected"); t.add_column("Actual"); t.add_column("Conf"); t.add_column("Source"); t.add_column("Rationale"); t.add_column("Pass")
+    for r in report.results:
+        ok = r.direction_correct and r.rationale_ok
+        t.add_row(
+            r.name, r.expected, r.actual, f"{r.confidence:.0%}", r.source,
+            "[green]yes[/]" if r.rationale_ok else "[red]no[/]",
+            "[green]PASS[/]" if ok else "[red]FAIL[/]",
+        )
+    console.print(t)
+
+    console.print(Panel(
+        f"direction accuracy: [bold]{report.direction_accuracy:.0%}[/]\n"
+        f"rationale rate:     [bold]{report.rationale_rate:.0%}[/]\n"
+        f"avg confidence:     [bold]{report.avg_confidence:.0%}[/]\n"
+        f"sources used:       {', '.join(f'{k} ({v})' for k, v in report.sources_used.items())}\n"
+        f"overall:            {'[green bold]PASS[/]' if report.passed else '[red bold]FAIL[/]'}",
+        title="Eval scorecard", border_style="cyan" if report.passed else "red",
+    ))
+
+    if not report.passed:
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()
