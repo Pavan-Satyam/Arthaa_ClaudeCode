@@ -1,6 +1,6 @@
 # ArthaAI — Architecture Status Report
 
-> Generated: 2026-08-24 · Branch: `feat/arthaai-core` · 50 DB-independent tests passing in 18s
+> Last updated: 2026-08-25 · Branch: `feat/arthaai-core` · 57 DB-independent tests passing in 6s
 
 ---
 
@@ -11,6 +11,9 @@
 - [Tier 3 — Oversight & Sizing](#tier-3--oversight--sizing)
 - [Tier 4 — Action](#tier-4--action)
 - [Overall System Summary](#overall-system-summary)
+  - [What was added on 2026-08-25](#what-was-added-on-2026-08-25)
+  - [Commits](#commits-5-total-unpushed)
+  - [Test count](#test-count-57-db-independent-tests-pass-in-6s)
 
 ---
 
@@ -99,6 +102,10 @@ Two production-hardening gaps were also closed:
 3. **`secure=False` was hardcoded** — now derived from `dev_mode` config: `secure=not s.dev_mode`. Production (`dev_mode=False`) enforces TLS-only cookies.
 
 4. **`dev-token` fallback was unconditional** — now refused when `dev_mode=False` and no real token is available from Vault/env. The dashboard raises `RuntimeError` instead of serving with a guessable credential.
+
+A serialization bug was fixed on 2026-08-25:
+
+5. **`numpy.bool_` serialization crash** — the `/analyze` endpoint returned 500 for all assets because `Allocation.capped_by_policy` was a `numpy.bool_` that Pydantic couldn't serialize to JSON. Fixed by wrapping with `float()` and `bool()` in `asset_manager.size()` so all Allocation fields are native Python types.
 
 ### What can be improved
 
@@ -312,6 +319,18 @@ Tier 2 is where analysis and data live — the brain of the system. The architec
 | Kafka event publish | Best-effort, never blocks ingestion | ✅ |
 | Friendly metadata | yfinance `shortName` + `quoteType` → asset class | ✅ |
 
+**London Strategic Edge (LSE) provider (`data/lse.py` — 118 lines)** ← new 2026-08-25
+
+| Feature | Implementation | Status |
+|---------|---------------|--------|
+| API candle fetch | `GET /v1/candles` with `X-API-Key` header; timeframes: 1m, 5m, 1h, 1d | ✅ ← new |
+| DataFrame conversion | LSE JSON → `ts, open, high, low, close, volume` (same schema as yfinance) | ✅ ← new |
+| Incremental ingest | Uses `latest_ts()` to fetch only new bars; off-by-one guard fixed | ✅ ← new |
+| 404 handling | Symbols not on LSE (e.g. USO) return empty → caller falls back to yfinance | ✅ ← new |
+| Asset auto-registration | `ensure_asset()` with friendly name + asset class before upsert | ✅ ← new |
+| API key security | Key in `.env` (gitignored), read via `os.environ.get`; never in code or URLs | ✅ ← new |
+| `arthaai ingest-lse` CLI | `arthaai ingest-lse GLD --days 730 --timeframe 1d` | ✅ ← new |
+
 **Kafka/Redpanda (`data/consumer.py` — 49 lines)**
 
 | Feature | Implementation | Status |
@@ -328,6 +347,7 @@ Tier 2 is where analysis and data live — the brain of the system. The architec
 | `test_indicators.py` | 15 | SMA, RSI bounds, annualised stats, trend signal labels, signal Kelly stats (trend, random walk, bearish wins, insufficient history), wr_from_tallies, vectorization equivalence, breakout path |
 | `test_eval.py` | 10 | Golden fixtures, rationale check, confidence bands, calibration score (perfect, anti, no-signal, too-few), offline passes all, aggregation |
 | `test_backtest.py` | 3 | Drawdown, monotonic, serialization |
+| `test_lse.py` | 4 | 404 returns empty, candle response parsing, missing API key raises, friendly meta mapping ← new |
 
 ### What was fixed/upgraded this session
 
@@ -343,6 +363,9 @@ Tier 2 is where analysis and data live — the brain of the system. The architec
 | Shared constants | Threshold/window duplicated per-agent | `BREAKOUT_ADX_THRESHOLD`, `BREAKOUT_ENTRY_WINDOW`, `BREAKOUT_EXIT_WINDOW` in `indicators.py` |
 | Embeddings | Hash fallback (cosine 0.22) | `fastembed BAAI/bge-small-en-v1.5` (cosine 0.98) |
 | Signed-return bug | `win_sum += rt` (bearish wins corrupt R) | `win_sum += abs(rt)` (direction-agnostic) |
+| LSE data provider | — (yfinance only) | `arthaai/data/lse.py` — LSE API provider with incremental ingest, 404 fallback, `ingest-lse` CLI command |
+| numpy serialization | `/analyze` crashed with 500 (`numpy.bool_` not JSON-serializable) | `float()` / `bool()` wrappers in `asset_manager.size()` — native Python types throughout |
+| Off-by-one in LSE incremental | — | Fixed: guard checks `last.date() >= now.date()` not `start.date() >= now.date()` |
 
 ### What can be improved
 
@@ -405,10 +428,10 @@ This is the highest-priority area. The blueprint calls Quant_Agent the ★ star 
 
 | Gap | Impact | Effort |
 |-----|--------|--------|
-| **No real-time data** — yfinance provides daily bars with a 1-day delay. No intraday, no live tick data. | The system is always one day behind; can't react to intraday moves; no live signal generation | High — add real-time data: WebSocket feed (Alpaca, Polygon, IEX), or yfinance intraday (1m/5m/15m intervals); streaming ingest pipeline |
-| **No incremental ingest** — `ingest()` fetches 730 days every time. No upsert-only-new-bars. | Re-downloading 2 years of data every analyze is wasteful; yfinance rate limits kick in | Low — add incremental: use `latest_ts()` to fetch only bars after the last known timestamp |
+| **No real-time data** — yfinance provides daily bars with a 1-day delay. LSE provides intraday (1m/5m/1h) but not via WebSocket. No live tick data. | The system is always one day behind on daily signals; can't react to intraday moves; no live signal generation | High — add real-time data: WebSocket feed (Alpaca, Polygon, IEX) or LSE WebSocket (paid plan); streaming ingest pipeline |
+| **No incremental ingest (yfinance)** — `ingest()` fetches 730 days every time. No upsert-only-new-bars. | Re-downloading 2 years of data every analyze is wasteful; yfinance rate limits kick in | Low — add incremental to yfinance path: use `latest_ts()` to fetch only bars after the last known timestamp. (LSE provider already has incremental ingest.) |
 | **No data quality checks** — no validation for gaps, outliers, splits, adjusted prices. | Bad data silently corrupts signals; stock splits produce false breakouts | Medium — add data quality: gap detection, split adjustment verification, outlier flagging, volume sanity checks |
-| **No alternative data providers** — only yfinance (free, rate-limited, US-centric). | Non-US assets may not be available; yfinance can be unreliable; no provider redundancy | Medium — add provider seam: Alpha Vantage, EOD Historical Data, Tiingo, Alpaca; failover chain like the LLM providers |
+| **No provider failover chain** — LSE and yfinance are separate commands, not a chain. If LSE doesn't have a symbol (e.g. USO), the user must manually use yfinance. | No automatic failover; user must know which provider has which symbol | Low — add provider seam: try LSE first, fall back to yfinance on 404; single `ingest` command that auto-selects |
 | **No caching layer** — every analyze call re-loads from TimescaleDB. No Redis/memcached. | DB hit on every request; slow for high-frequency dashboard refreshes | Low — add caching: TTL cache on `load_ohlcv` (60s for daily bars); invalidation on ingest |
 | **No timeseries compression** — TimescaleDB hypertable but no compression policy. | Storage grows unbounded; old data is rarely accessed but takes full space | Low — add compression: TimescaleDB native compression on chunks older than 30 days |
 
@@ -448,14 +471,15 @@ This is the highest-priority area. The blueprint calls Quant_Agent the ★ star 
 | Alt Agent (physical data) | ○ deferred | ○ stub | Requires commercial contracts; no free alternative data |
 | Correlation Regime agent | ★ "build next" | ✗ not started | Not implemented — no regime detection, no cross-asset correlation |
 | Master Reasoning LLM | ✅ | ✅ | No fine-tuning; no CoT; no calibration training; no ensemble; no streaming |
-| TimescaleDB | ✅ | ✅ | No incremental ingest; no caching; no data quality; no compression |
+| TimescaleDB | ✅ | ✅ | No caching; no data quality; no compression |
 | Qdrant (hybrid search) | ✅ | ✅ ← fixed | Embeddings work; no live news flow |
-| yfinance ingest | ✅ | ✅ | No real-time; no alternative providers; no incremental |
+| yfinance ingest | ✅ | ✅ | No real-time; no incremental; no provider failover |
+| LSE data provider | ✅ | ✅ ← new | Free plan only (candles); no macro/bonds/options (paid); no provider failover to yfinance yet |
 | Kafka/Redpanda | ✅ | ✅ | Producer + consumer; no streaming pipeline |
 | Circuit breakers | ✅ | ✅ | — |
 | OPA policy enforcement | ✅ | ✅ | — |
 
-**Implementation: ~65% of the Tier 2 blueprint.**
+**Implementation: ~68% of the Tier 2 blueprint.** (↑ from 65% — LSE provider added)
 
 ---
 
@@ -769,14 +793,20 @@ The blueprint's design rules for Tier 4:
 
 | Tier | Planned | Implemented | Key gap |
 |------|---------|-------------|---------|
-| **Tier 1 — Interface & Ingress** | ~100% | ~85% | Real OAuth 2.1 / JWT; mTLS (infra); dashboard UX |
-| **Tier 2 — Intelligence Core** | ~100% | ~65% | Quant Agent factor engine (the ★ star); live news; correlation regime |
+| **Tier 1 — Interface & Ingress** | ~100% | ~87% | Real OAuth 2.1 / JWT; mTLS (infra); dashboard UX |
+| **Tier 2 — Intelligence Core** | ~100% | ~68% | Quant Agent factor engine (the ★ star); live news; correlation regime |
 | **Tier 3 — Oversight & Sizing** | ~100% | ~70% | Portfolio Kelly; risk metrics (VaR/ES); automated backtest gate |
 | **Tier 4 — Action** | ~100% | ~40% | Position lifecycle; fill simulation; stop-loss triggering |
 
 The system's **plumbing is complete** — data flows from Tier 1 through Tier 4 with auth, circuit breakers, OPA enforcement, and Kelly sizing. The **edge is thin** — the honest finding is that no signal beats B&H on raw return, and the Quant Agent (where "the edge lives") is basic stats, not the factor engine the blueprint calls for. The **priority sequence** the blueprint specifies is correct: prove the signal edge (Tier 2 Quant Agent) → automate the backtest gate (Tier 3 Law 3) → then build the execution layer (Tier 4) → then connect real money (gated by Law 3).
 
-### Commits this session (4 total, unpushed)
+### What was added on 2026-08-25
+
+- **LSE data provider** (`arthaai/data/lse.py`) — London Strategic Edge API integration with incremental ingest, 404 fallback, `ingest-lse` CLI command. 5 assets (GLD, SLV, XOM, AAPL, TSLA) ingested from LSE (501 bars each).
+- **numpy serialization fix** — `/analyze` endpoint no longer crashes with 500 (`numpy.bool_` → native `bool` in `asset_manager.size()`).
+- **Off-by-one fix** — LSE incremental ingest guard corrected to prevent permanent one-day lag in scheduled ingest.
+
+### Commits (5 total, unpushed)
 
 | Commit | Description |
 |--------|-------------|
@@ -784,8 +814,24 @@ The system's **plumbing is complete** — data flows from Tier 1 through Tier 4 
 | `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
 | `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
 | `57abb1d` | Breakout live wiring + eval calibration + OPA fix + AGENTS.md |
+| `b0252a6` | 4-tier architecture status report (STATUS_REPORT.md) |
 
-### Test count: 50 DB-independent tests pass in 18s
+Uncommitted (ready to commit): LSE data provider, numpy fix, off-by-one fix, test_lse.py.
+
+### Test count: 57 DB-independent tests pass in 6s
+
+| Test file | Tests | What it covers |
+|-----------|-------|---------------|
+| `test_indicators.py` | 15 | SMA, RSI, annualised stats, trend signal, signal Kelly stats, vectorization, breakout |
+| `test_kelly.py` | 8 | Discrete/continuous Kelly, policy cap, no-edge → flat, negative-edge → flat |
+| `test_backtest.py` | 3 | Drawdown, monotonic, serialization |
+| `test_eval.py` | 10 | Golden fixtures, rationale, confidence bands, calibration score |
+| `test_llm.py` | 5 | Verdict parsing, provider chain fallback, chain always ends offline |
+| `test_gateway.py` | 7 | Auth required, cookie auth, httpOnly cookie, dev-token refusal |
+| `test_policy.py` | 3 | OPA allow/deny |
+| `test_execution.py` | 3 | Order sizing, sell stop, drawdown breaker |
+| `test_lse.py` | 4 | 404 fallback, candle parsing, API key required, friendly meta ← new |
+| **Total** | **57** | +1 health test excluded (needs Docker) |
 
 ---
 

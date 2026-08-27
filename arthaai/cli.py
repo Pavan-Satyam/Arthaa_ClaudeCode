@@ -78,12 +78,50 @@ def universe(
 
 
 @app.command()
-def ingest(symbol: str, days: int = 730) -> None:
-    """Pull OHLCV for SYMBOL into TimescaleDB."""
-    from arthaai.data import ingest as ingest_mod
+def ingest(
+    symbol: str,
+    days: int = typer.Option(730, help="Lookback days (ignored if data already exists)."),
+    timeframe: str = typer.Option("1d", help="Candle timeframe: 1d, 1h, 5m, 1m."),
+    provider: str = typer.Option("auto", help="Data provider: auto (LSE→yfinance), lse, yfinance."),
+) -> None:
+    """Pull OHLCV for SYMBOL into TimescaleDB via the provider chain.
 
-    n = ingest_mod.ingest(symbol, lookback_days=days)
-    console.print(f"ingested [bold]{n}[/] bars for [bold]{symbol.upper()}[/].")
+    Default 'auto' tries LSE first, falls back to yfinance if the symbol
+    isn't available on LSE (e.g. USO). Use --provider lse or --provider
+    yfinance to force a single source.
+    """
+    from arthaai.data.provider import ingest_resilient
+
+    with console.status(f"[bold]fetching {symbol.upper()} via {provider}…"):
+        result = ingest_resilient(symbol, lookback_days=days, timeframe=timeframe, provider=provider)
+
+    if result.rows == 0 and result.incremental:
+        console.print(f"[dim]{symbol.upper()} is already up to date.[/]")
+    elif result.rows == 0:
+        console.print(f"[red]No data found for {symbol.upper()} via {result.provider}.[/]")
+    else:
+        color = "cyan" if result.provider == "lse" else "yellow"
+        console.print(
+            f"ingested [bold]{result.rows}[/] bars for [bold]{symbol.upper()}[/] "
+            f"([{color}]{result.provider}[/]{' · incremental' if result.incremental else ''})."
+        )
+
+
+@app.command(name="ingest-lse")
+def ingest_lse(
+    symbol: str,
+    days: int = typer.Option(730, help="Lookback days (ignored if data already exists)."),
+    timeframe: str = typer.Option("1d", help="Candle timeframe: 1m, 5m, 1h, 1d."),
+) -> None:
+    """Pull OHLCV for SYMBOL via LSE only (alias for: ingest --provider lse)."""
+    from arthaai.data.provider import ingest_resilient
+
+    with console.status(f"[bold]fetching {symbol.upper()} from LSE…"):
+        result = ingest_resilient(symbol, lookback_days=days, timeframe=timeframe, provider="lse")
+    if result.rows == 0:
+        console.print(f"[red]No data found for {symbol.upper()} on LSE.[/]")
+    else:
+        console.print(f"ingested [bold]{result.rows}[/] bars for [bold]{symbol.upper()}[/] ([cyan]lse[/]).")
 
 
 @app.command()
@@ -344,6 +382,112 @@ def eval(
     ))
 
     if not report.passed:
+        raise typer.Exit(1)
+
+
+@app.command(name="factors")
+def factors(
+    action: str = typer.Argument("list", help="list | show | bench"),
+    alpha_id: str = typer.Option("", help="Alpha ID for 'show' (e.g. alpha101_001)"),
+    zoo: str = typer.Option("", help="Filter by zoo: alpha101, gtja191, qlib158"),
+    top: int = typer.Option(20, help="Top-K results for bench"),
+    symbols: str = typer.Option("GLD,SLV,XOM", help="Symbols for bench (comma-separated)"),
+) -> None:
+    """Alpha Zoo factor engine — list, show, or bench factors."""
+    from arthaai.factors.registry import get_default_registry
+
+    reg = get_default_registry()
+
+    if action == "list":
+        zoo_filter = zoo or None
+        ids = reg.list(zoo=zoo_filter)
+        console.print(f"[bold]{len(ids)}[/] alphas registered" + (f" (zoo={zoo})" if zoo else ""))
+        # Group by zoo
+        by_zoo: dict[str, list[str]] = {}
+        for aid in ids:
+            z = reg.get(aid).zoo
+            by_zoo.setdefault(z, []).append(aid)
+        for z, zids in sorted(by_zoo.items()):
+            console.print(f"\n  [cyan]{z}[/] ({len(zids)} alphas)")
+            for aid in zids[:5]:
+                meta = reg.get(aid).meta
+                themes = ", ".join(meta.get("theme", []))
+                console.print(f"    {aid:25} [{themes}]")
+            if len(zids) > 5:
+                console.print(f"    [dim]... and {len(zids) - 5} more[/]")
+
+    elif action == "show":
+        if not alpha_id:
+            console.print("[red]Usage: factors show --alpha-id alpha101_001[/]")
+            raise typer.Exit(1)
+        try:
+            alpha = reg.get(alpha_id)
+        except KeyError:
+            console.print(f"[red]Alpha '{alpha_id}' not found[/]")
+            raise typer.Exit(1)
+        meta = alpha.meta
+        console.print(Panel(
+            f"id:              {alpha.id}\n"
+            f"zoo:              {alpha.zoo}\n"
+            f"theme:            {', '.join(meta.get('theme', []))}\n"
+            f"formula:          {meta.get('formula_latex', '?')}\n"
+            f"columns required: {meta.get('columns_required', [])}\n"
+            f"universe:         {', '.join(meta.get('universe', []))}\n"
+            f"warmup bars:      {meta.get('min_warmup_bars', '?')}\n"
+            f"notes:            {meta.get('notes', '')}",
+            title=f"Alpha: {alpha.id}",
+        ))
+
+    elif action == "bench":
+        from arthaai.factors.panel import build_panel_from_symbols, compute_forward_returns
+        from arthaai.factors.eval import compute_ic_series, compute_ic_stats, categorise
+
+        sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        with console.status(f"[bold]building panel for {sym_list}…"):
+            panel = build_panel_from_symbols(sym_list, limit=1000)
+        if not panel:
+            console.print("[red]No data — run `arthaai ingest` first[/]")
+            raise typer.Exit(1)
+
+        fwd_ret = compute_forward_returns(panel)
+        zoo_filter = zoo or None
+        alpha_ids = reg.list(zoo=zoo_filter)
+
+        console.print(f"Evaluating {len(alpha_ids)} factors over {len(sym_list)} assets…")
+        t = Table(title=f"Factor bench · {zoo or 'all zoos'} · top {top} by |IR|")
+        t.add_column("ID"); t.add_column("IC Mean", justify="right"); t.add_column("IR", justify="right")
+        t.add_column("t-stat", justify="right"); t.add_column("Category"); t.add_column("Themes")
+
+        results: list[tuple] = []
+        for aid in alpha_ids:
+            try:
+                factor_df = reg.compute(aid, panel)
+                ic = compute_ic_series(factor_df, fwd_ret)
+                if ic.empty:
+                    continue
+                stats = compute_ic_stats(ic)
+                cat = categorise(stats["ic_mean"], stats["ic_positive_ratio"], stats["ic_std"], stats["ic_count"])
+                meta = reg.get(aid).meta
+                results.append((aid, stats, cat, ", ".join(meta.get("theme", []))))
+            except Exception:
+                continue
+
+        results.sort(key=lambda x: abs(x[1]["ir"]), reverse=True)
+        for aid, stats, cat, themes in results[:top]:
+            color = "green" if cat == "alive" else "red" if cat == "reversed" else "dim"
+            t.add_row(
+                aid,
+                f"{stats['ic_mean']:+.4f}",
+                f"{stats['ir']:+.4f}",
+                f"{stats['t_stat']:.2f}",
+                f"[{color}]{cat}[/]",
+                themes,
+            )
+        console.print(t)
+        console.print(f"\n[dim]{len(results)} factors evaluated · {sum(1 for _,_,c,_ in results if c=='alive')} alive · {sum(1 for _,_,c,_ in results if c=='reversed')} reversed · {sum(1 for _,_,c,_ in results if c=='dead')} dead[/]")
+
+    else:
+        console.print("[red]Usage: factors list | show | bench[/]")
         raise typer.Exit(1)
 
 

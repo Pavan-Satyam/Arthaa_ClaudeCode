@@ -1,0 +1,24 @@
+"""qlib158 RSQR60 factor."""
+from __future__ import annotations
+
+import pandas as pd
+__alpha_meta__ = {
+    'id': 'qlib158_rsqr60',
+    'theme': ['momentum'],
+    'formula_latex': '\\\\mathrm{ts\\\\_corr}(\\\\mathrm{close}, t, 60)^2',
+    'columns_required': ['close'],
+    'universe': ['equity_us', 'equity_cn', 'equity_hk', 'equity_in', 'equity_kr'],
+    'frequency': ['1d'],
+    'decay_horizon': 60,
+    'min_warmup_bars': 60,
+}
+
+
+def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Return qlib158 RSQR60 on the supplied OHLCV panel."""
+    c = panel['close']
+    t_arr = np.arange(len(c.index), dtype=np.float64)
+    t_df = pd.DataFrame(np.broadcast_to(t_arr[:, None], c.shape).copy(), index=c.index, columns=c.columns)
+    corr = ts_corr(c, t_df, 60)
+    return corr * corr
+rsv5.py — rsv60.py (未成熟随机值)

@@ -70,6 +70,17 @@ class Settings(BaseSettings):
     # Gateway security
     dev_mode: bool = True                # False in production: enforce TLS cookies, reject dev-token fallback
 
+    # London Strategic Edge — free market-data API (https://londonstrategicedge.com)
+    # Key is in the unprefixed LSE_API_KEY env var (loaded by load_dotenv above).
+    @property
+    def lse_api_key(self) -> str | None:
+        import os
+        return os.environ.get("LSE_API_KEY") or None
+
+    @property
+    def lse_base_url(self) -> str:
+        return "https://api.londonstrategicedge.com"
+
     @property
     def timescale_dsn(self) -> str:
         return (

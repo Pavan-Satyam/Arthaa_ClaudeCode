@@ -64,11 +64,11 @@ def size(quant: dict, *, confidence: float | None = None) -> Allocation:
     # routinely exceeds 100% and would let the policy cap do all the sizing,
     # hiding the signal's (lack of) edge. A negative or zero discrete edge sizes
     # to flat (no shorting here) rather than pumping leverage via continuous Kelly.
-    raw = max(0.0, d_kelly)
+    raw = max(0.0, float(d_kelly))
     fractional = raw * s.kelly_fraction
 
-    final = min(fractional, s.max_single_instrument)
-    capped = final < fractional
+    final = float(min(fractional, s.max_single_instrument))
+    capped = bool(final < fractional)
     rationale = (
         f"quarter-Kelly ({s.kelly_fraction:g}x) on discrete f={d_kelly:.3f} "
         f"(W={w:.2f}, R={r:.2f}); continuous f*={c_kelly:.2f} (informational); "
