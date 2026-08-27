@@ -23,4 +23,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     num = neg.rolling(window=60, min_periods=60).sum()
     den = absd.rolling(window=60, min_periods=60).sum()
     return safe_div(num, den)
-vsump5.py — vsump60.py (成交量上涨强度)

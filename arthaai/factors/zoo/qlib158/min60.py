@@ -19,4 +19,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     lo = panel['low']
     c = panel['close']
     return safe_div(ts_min(lo, 60), c)
-qtld5.py — qtld60.py (下分位数)

@@ -18,4 +18,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return qlib158 MA60 on the supplied OHLCV panel."""
     c = panel['close']
     return safe_div(ts_mean(c, 60), c)
-max5.py — max60.py (最大价)

@@ -19,4 +19,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     c = panel['close']
     q = c.rolling(window=60, min_periods=60).quantile(0.8)
     return safe_div(q, c)
-rank5.py — rank60.py (时间序列排名)

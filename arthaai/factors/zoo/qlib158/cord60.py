@@ -22,4 +22,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     v_ret = safe_div(v + 1.0, v.shift(1) + 1.0)
     logvr = np.log(v_ret)
     return ts_corr(c_ret, logvr, 60)
-corr5.py — corr60.py (价量相关性)

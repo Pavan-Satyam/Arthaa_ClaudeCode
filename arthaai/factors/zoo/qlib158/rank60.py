@@ -18,4 +18,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return qlib158 RANK60 on the supplied OHLCV panel."""
     c = panel['close']
     return ts_rank(c, 60)
-resi5.py — resi60.py (残差)

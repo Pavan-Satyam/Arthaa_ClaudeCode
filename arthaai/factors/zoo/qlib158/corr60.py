@@ -20,4 +20,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     v = panel['volume']
     logv = np.log1p(v)
     return ts_corr(c, logv, 60)
-imax5.py — imax60.py (最高价位置)

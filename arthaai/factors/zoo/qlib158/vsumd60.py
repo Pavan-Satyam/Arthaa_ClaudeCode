@@ -25,4 +25,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     num_n = neg.rolling(window=60, min_periods=60).sum()
     den = absd.rolling(window=60, min_periods=60).sum()
     return safe_div(num_p - num_n, den)
-vsumn5.py — vsumn60.py (成交量下跌强度)

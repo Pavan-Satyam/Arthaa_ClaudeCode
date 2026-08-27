@@ -18,4 +18,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return qlib158 RESI60 on the supplied OHLCV panel."""
     c = panel['close']
     return safe_div(c - ts_mean(c, 60), c)
-roc5.py — roc60.py (变动率)

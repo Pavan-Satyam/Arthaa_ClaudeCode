@@ -19,4 +19,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     h = panel['high']
     c = panel['close']
     return safe_div(ts_max(h, 60), c)
-min5.py — min60.py (最小价)

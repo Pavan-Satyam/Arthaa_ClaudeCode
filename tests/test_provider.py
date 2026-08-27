@@ -68,7 +68,7 @@ class TestFetchOhlcv:
     def test_no_lse_key_uses_yfinance(self, monkeypatch):
         """When no LSE API key is set, goes straight to yfinance."""
         yf_df = _make_df(n=15)
-        monkeypatch.setattr("arthaai.data.provider.get_settings", lambda: type("S", (), {
+        monkeypatch.setattr("arthaai.config.get_settings", lambda: type("S", (), {
             "lse_api_key": None, "lse_base_url": "https://fake.lse.com",
         })())
         monkeypatch.setattr("arthaai.data.ingest._download", lambda *a, **kw: yf_df)

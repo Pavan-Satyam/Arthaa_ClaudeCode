@@ -21,4 +21,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     h = panel['high']
     lo = panel['low']
     return safe_div(2.0 * c - h - lo, h - lo)
-ma5.py — ma60.py (移动均线比)

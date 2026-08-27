@@ -19,4 +19,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     c = panel['close']
     q = c.rolling(window=60, min_periods=60).quantile(0.2)
     return safe_div(q, c)
-qtlu5.py — qtlu60.py (上分位数)

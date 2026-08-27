@@ -23,4 +23,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     num = pos.rolling(window=60, min_periods=60).sum()
     den = absd.rolling(window=60, min_periods=60).sum()
     return safe_div(num, den)
-wvma5.py — wvma60.py (成交量加权波动)

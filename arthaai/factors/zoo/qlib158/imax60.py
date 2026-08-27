@@ -18,4 +18,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return qlib158 IMAX60 on the supplied OHLCV panel."""
     h = panel['high']
     return ts_argmax(h, 60) / float(60)
-imin5.py — imin60.py (最低价位置)

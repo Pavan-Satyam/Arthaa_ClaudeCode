@@ -18,4 +18,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return qlib158 IMIN60 on the supplied OHLCV panel."""
     lo = panel['low']
     return ts_argmin(lo, 60) / float(60)
-imxd5.py — imxd60.py (极值跨度)

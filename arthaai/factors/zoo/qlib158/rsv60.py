@@ -22,4 +22,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     hh = ts_max(h, 60)
     ll = ts_min(lo, 60)
     return safe_div(c - ll, hh - ll)
-std5.py — std60.py (价格标准差比)

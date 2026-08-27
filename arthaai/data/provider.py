@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from arthaai.config import get_settings
+import arthaai.config
 from arthaai.db import timescale
 
 
@@ -54,7 +54,7 @@ def fetch_ohlcv(
     an empty DataFrame is returned with provider="none".
     """
     symbol = symbol.upper()
-    s = get_settings()
+    s = arthaai.config.get_settings()
 
     # 1. Try LSE first (richer data, 2-year history, faster for many symbols)
     if s.lse_api_key:
@@ -69,11 +69,11 @@ def fetch_ohlcv(
 
     # 2. Fallback to yfinance
     try:
-        from arthaai.data import ingest as yf_ingest
+        from arthaai.data import ingest as yf_ingest_mod
 
         # yfinance uses "1d" / "1h" / "5m" / "1m" — map LSE timeframe if needed
         yf_interval = timeframe if timeframe in ("1d", "1h", "5m", "1m") else "1d"
-        df = yf_ingest._download(symbol, start, yf_interval)
+        df = yf_ingest_mod._download(symbol, start, yf_interval)
         if not df.empty:
             return df, "yfinance"
     except Exception:
@@ -84,14 +84,14 @@ def fetch_ohlcv(
 
 def _friendly_meta(symbol: str) -> tuple[str, str]:
     """Best-effort name + asset class — tries yfinance, falls back to LSE map."""
+    from arthaai.data import ingest as yf_ingest_mod
+
     try:
-        from arthaai.data import ingest as yf_ingest
-
-        return yf_ingest._friendly_meta(symbol)
+        return yf_ingest_mod._friendly_meta(symbol)
     except Exception:
-        from arthaai.data import lse
+        from arthaai.data import lse as lse_mod
 
-        return lse._friendly_meta(symbol)
+        return lse_mod._friendly_meta(symbol)
 
 
 def ingest_resilient(
@@ -116,7 +116,9 @@ def ingest_resilient(
 
     # Ensure the asset exists (FK constraint)
     if not timescale.asset_meta(symbol):
-        name, asset_class = _friendly_meta(symbol)
+        from arthaai.data import lse as lse_mod
+
+        name, asset_class = lse_mod._friendly_meta(symbol)
         timescale.ensure_asset(symbol, name=name, asset_class=asset_class)
 
     # Incremental: check if we already have data
@@ -136,15 +138,15 @@ def ingest_resilient(
 
     # Route to the appropriate provider
     if provider == "lse":
-        from arthaai.data import lse
+        from arthaai.data import lse as lse_mod
 
-        df = lse.download(symbol, start, now, timeframe=timeframe)
+        df = lse_mod.download(symbol, start, now, timeframe=timeframe)
         used = "lse" if not df.empty else "none"
     elif provider == "yfinance":
-        from arthaai.data import ingest as yf_ingest
+        from arthaai.data import ingest as yf_ingest_mod
 
         yf_interval = timeframe if timeframe in ("1d", "1h", "5m", "1m") else "1d"
-        df = yf_ingest._download(symbol, start, yf_interval)
+        df = yf_ingest_mod._download(symbol, start, yf_interval)
         used = "yfinance" if not df.empty else "none"
     else:
         # auto: try LSE first, fall back to yfinance
@@ -157,9 +159,9 @@ def ingest_resilient(
 
     # Publish Kafka event (best-effort, never blocks)
     try:
-        from arthaai.data import ingest as yf_ingest
+        from arthaai.data import ingest as yf_ingest_mod
 
-        yf_ingest._publish_event(symbol, written)
+        yf_ingest_mod._publish_event(symbol, written)
     except Exception:
         pass
 

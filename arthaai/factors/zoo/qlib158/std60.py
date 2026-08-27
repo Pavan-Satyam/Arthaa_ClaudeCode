@@ -18,4 +18,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Return qlib158 STD60 on the supplied OHLCV panel."""
     c = panel['close']
     return safe_div(ts_std(c, 60), c)
-sumd5.py — sumd60.py (涨跌差)

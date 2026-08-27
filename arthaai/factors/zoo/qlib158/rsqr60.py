@@ -21,4 +21,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     t_df = pd.DataFrame(np.broadcast_to(t_arr[:, None], c.shape).copy(), index=c.index, columns=c.columns)
     corr = ts_corr(c, t_df, 60)
     return corr * corr
-rsv5.py — rsv60.py (未成熟随机值)
