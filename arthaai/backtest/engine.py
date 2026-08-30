@@ -21,6 +21,26 @@ from arthaai.agents import asset_manager, indicators
 from arthaai.db import timescale
 
 
+def oos_slice(n_total: int, oos_pct: float = 0.30) -> tuple[int, int]:
+    """Return (in_start, in_end) indices for an out-of-sample split.
+
+    The in-sample period is bars [0, in_end), and the out-of-sample period is
+    bars [in_end, n_total). Minimum OOS is one bar if n_total is tiny.
+
+    Args:
+        n_total: total number of bars available.
+        oos_pct: fraction of total bars to reserve for OOS (default 0.30).
+
+    Returns:
+        (in_end, n_total) where in_end is the first OOS bar index.
+    """
+    if n_total <= 0:
+        return 0, 0
+    n_oos = max(1, int(round(n_total * oos_pct)))
+    in_end = max(0, n_total - n_oos)
+    return in_end, n_total
+
+
 @dataclass
 class BacktestResult:
     symbol: str
@@ -55,9 +75,25 @@ def _max_drawdown(equity: pd.Series) -> float:
 def run_backtest(
     symbol: str, *, warmup: int = 60, limit: int = 500,
     signal: str = "trend", adx_threshold: float = 0.0,
+    data_slice: slice | None = None,
 ) -> BacktestResult:
+    """Walk-forward backtest with look-ahead-bias guards.
+
+    Args:
+        symbol: Ticker symbol.
+        warmup: minimum bars before first signal.
+        limit: max bars to load.
+        signal: 'trend' or 'breakout'.
+        adx_threshold: ADX regime threshold for breakout signal.
+        data_slice: optional slice into the loaded OHLCV (e.g. for OOS runs).
+
+    Returns:
+        BacktestResult with all metrics.
+    """
     symbol = symbol.upper()
     df = timescale.load_ohlcv(symbol, limit=limit)
+    if data_slice is not None:
+        df = df[data_slice]
     if len(df) < warmup + 5:
         raise ValueError(f"not enough history for {symbol} (need > {warmup + 5} bars).")
 
