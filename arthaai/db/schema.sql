@@ -36,3 +36,22 @@ INSERT INTO assets (symbol, name, asset_class, exchange) VALUES
     ('MSFT', 'Microsoft Corporation',      'equity',        'NASDAQ'),
     ('XOM',  'Exxon Mobil Corporation',    'equity',        'NYSE')
 ON CONFLICT (symbol) DO NOTHING;
+
+-- Signal promotion tracking: OOS evaluation results for each symbol/signal pair.
+CREATE TABLE IF NOT EXISTS signal_promotion (
+    symbol          TEXT        NOT NULL,
+    signal          TEXT        NOT NULL DEFAULT 'trend',
+    qualified       BOOLEAN     NOT NULL,
+    sharpe          DOUBLE PRECISION,
+    max_drawdown    DOUBLE PRECISION,
+    oos_return      DOUBLE PRECISION,
+    buy_hold_return DOUBLE PRECISION,
+    evaluated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, signal)
+);
+CREATE INDEX IF NOT EXISTS signal_promotion_qualified_idx ON signal_promotion (qualified) WHERE qualified = TRUE;
+
+-- Preferred data provider per asset (provider chain fallback).
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS preferred_provider TEXT;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_provider    TEXT;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_ingest_at  TIMESTAMPTZ;

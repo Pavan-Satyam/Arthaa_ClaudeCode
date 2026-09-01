@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
-from typing import Iterator
+from datetime import datetime, timezone
 
 import pandas as pd
 import psycopg
@@ -98,3 +98,110 @@ def latest_ts(symbol: str, interval: str = "1d") -> datetime | None:
             "SELECT max(ts) FROM ohlcv WHERE symbol = %s AND interval = %s;", (symbol, interval)
         )
         return cur.fetchone()[0]
+
+
+# ---- Signal promotion (OOS gate) --------------------------------------------
+
+def upsert_signal_promotion(
+    symbol: str,
+    signal: str,
+    qualified: bool,
+    sharpe: float,
+    max_drawdown: float,
+    oos_return: float,
+    buy_hold_return: float,
+) -> None:
+    """Record an OOS promotion evaluation for (symbol, signal)."""
+    symbol = symbol.upper()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO signal_promotion
+                (symbol, signal, qualified, sharpe, max_drawdown,
+                 oos_return, buy_hold_return, evaluated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (symbol, signal) DO UPDATE
+              SET qualified = EXCLUDED.qualified,
+                  sharpe = EXCLUDED.sharpe,
+                  max_drawdown = EXCLUDED.max_drawdown,
+                  oos_return = EXCLUDED.oos_return,
+                  buy_hold_return = EXCLUDED.buy_hold_return,
+                  evaluated_at = now();
+            """,
+            (symbol, signal, bool(qualified), sharpe, max_drawdown, oos_return, buy_hold_return),
+        )
+        conn.commit()
+
+
+def get_signal_promotion(symbol: str, signal: str = "trend") -> dict | None:
+    """Return the most recent OOS promotion record for (symbol, signal)."""
+    symbol = symbol.upper()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT qualified, sharpe, max_drawdown, oos_return,
+                   buy_hold_return, evaluated_at
+            FROM signal_promotion
+            WHERE symbol = %s AND signal = %s;
+            """,
+            (symbol, signal),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "symbol": symbol,
+        "signal": signal,
+        "qualified": bool(row[0]),
+        "sharpe": row[1],
+        "max_drawdown": row[2],
+        "oos_return": row[3],
+        "buy_hold_return": row[4],
+        "evaluated_at": row[5],
+    }
+
+
+def list_qualified_symbols(signal: str = "trend") -> list[str]:
+    """Return all symbols whose latest (symbol, signal) promotion is qualified."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol FROM signal_promotion WHERE signal = %s AND qualified = TRUE;",
+            (signal,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+# ---- Preferred provider per asset -------------------------------------------
+
+def set_preferred_provider(symbol: str, provider: str) -> None:
+    """Pin a preferred data provider for the asset; empty string clears it."""
+    symbol = symbol.upper()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE assets SET preferred_provider = %s WHERE symbol = %s;",
+            (provider or None, symbol),
+        )
+        conn.commit()
+
+
+def get_preferred_provider(symbol: str) -> str | None:
+    """Return the preferred provider for the asset, or None if not set."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT preferred_provider FROM assets WHERE symbol = %s;",
+            (symbol.upper(),),
+        )
+        row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
+def record_ingest_provider(symbol: str, provider: str, ts: datetime | None = None) -> None:
+    """Record the provider used for the latest ingest run."""
+    symbol = symbol.upper()
+    ts = ts or datetime.now(timezone.utc)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE assets SET last_provider = %s, last_ingest_at = %s WHERE symbol = %s;",
+            (provider, ts, symbol),
+        )
+        conn.commit()

@@ -216,6 +216,93 @@ def execute(
 
 
 @app.command()
+def promote(
+    symbol: str,
+    signal: str = typer.Option("trend", help="trend | breakout"),
+    warmup: int = 60,
+    limit: int = 500,
+    adx: float = typer.Option(0.0, help="ADX gate for breakout (e.g. 25)."),
+    dry_run: bool = typer.Option(False, help="Show results without saving to DB."),
+    save: bool = typer.Option(True, help="Save promotion result to DB."),
+) -> None:
+    """Run an OOS promotion evaluation for SYMBOL.
+
+    Evaluates the signal on the last 30% of bars (OOS). Promotion requires ALL THREE:
+    1. Sharpe (annualised) >= 1.0
+    2. Max drawdown <= 20%
+    3. Strategy return > buy-and-hold return
+
+    Results are saved to TimescaleDB and shown in the table.
+    """
+    from arthaai.backtest import oos_slice, run_backtest
+    from arthaai.backtest.promotion import MAX_DD, MIN_SHARPE, evaluate_promotion
+    from arthaai.db import timescale
+
+    symbol = symbol.upper()
+    adx_threshold = adx if signal == "breakout" else 0.0
+
+    console.print(f"[bold]Running promotion evaluation for {symbol} ({signal})…[/]")
+    console.print("[dim]OOS slice = last 30% of bars[/]")
+
+    df = timescale.load_ohlcv(symbol, limit=limit)
+    if len(df) < warmup + 10:
+        console.print(f"[red]Not enough data: {len(df)} bars (need > {warmup + 10}).[/]")
+        raise typer.Exit(1)
+
+    in_end, n_total = oos_slice(len(df), oos_pct=0.30)
+    is_bars = n_total - in_end
+    console.print(f"[dim]IS: bars 0–{in_end} ({is_bars} bars) · OOS: bars {in_end}–{n_total} ({n_total - in_end} bars)[/]")
+
+    oos_slice_range = slice(in_end, n_total)
+    with console.status(f"[bold]Running OOS backtest (bars {in_end}–{n_total})…"):
+        oos = run_backtest(
+            symbol, warmup=warmup, limit=limit, signal=signal,
+            adx_threshold=adx_threshold, data_slice=oos_slice_range,
+        )
+
+    ev = evaluate_promotion(
+        oos_sharpe=oos.sharpe,
+        oos_max_drawdown=oos.max_drawdown,
+        oos_total_return=oos.total_return,
+        buy_hold_return=oos.buy_hold_return,
+    )
+
+    t = Table(title=f"Promotion · {symbol} · {signal}", show_header=True, header_style="bold")
+    t.add_column("Criterion", width=20); t.add_column("Threshold", justify="right")
+    t.add_column("Actual", justify="right"); t.add_column("Pass?", justify="center")
+    t.add_row("Sharpe (ann.)", f"≥ {MIN_SHARPE:.1f}", f"{oos.sharpe:.2f}", "✅" if ev.sharpe_ok else "❌")
+    t.add_row("Max drawdown", f"≤ {MAX_DD:.0%}", f"{oos.max_drawdown:.2%}", "✅" if ev.dd_ok else "❌")
+    t.add_row("Beats B&H", f"> {oos.buy_hold_return:+.2%}", f"{oos.total_return:+.2%}", "✅" if ev.bh_ok else "❌")
+    console.print(t)
+
+    border = "green" if ev.qualified else "red"
+    verdict_str = "[bold green]QUALIFIED[/] — promoted" if ev.qualified else "[bold red]REJECTED[/]"
+    console.print(Panel(
+        f"{verdict_str}\n"
+        f"OOS return: {oos.total_return:+.2%}  B&H: {oos.buy_hold_return:+.2%}  "
+        f"Sharpe: {oos.sharpe:.2f}  MaxDD: {oos.max_drawdown:.2%}\n"
+        f"Trades: {oos.trades}  Hit rate: {oos.hit_rate:.0%}\n\n"
+        f"[dim]Failures: {ev.reason if not ev.qualified else 'none'}[/]",
+        title="Promotion result", border_style=border,
+    ))
+
+    if save and not dry_run:
+        try:
+            timescale.upsert_signal_promotion(
+                symbol=symbol,
+                signal=signal,
+                qualified=ev.qualified,
+                sharpe=oos.sharpe,
+                max_drawdown=oos.max_drawdown,
+                oos_return=oos.total_return,
+                buy_hold_return=oos.buy_hold_return,
+            )
+            console.print(f"[dim]Saved promotion record to DB (symbol={symbol}, signal={signal}).[/]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]Could not save to DB: {exc}  (run `docker compose up -d` to enable persistence)[/]")
+
+
+@app.command()
 def backtest(
     symbol: str,
     warmup: int = 60,
