@@ -12,8 +12,9 @@
 - [Tier 4 — Action](#tier-4--action)
 - [Overall System Summary](#overall-system-summary)
   - [What was added on 2026-08-25](#what-was-added-on-2026-08-25)
-  - [Commits](#commits-5-total-unpushed)
-  - [Test count](#test-count-57-db-independent-tests-pass-in-6s)
+  - [What was added on 2026-08-31](#what-was-added-on-2026-08-31-88c3f22)
+  - [Commits](#commits-pushed-to-originfeatarthaai-core)
+  - [Test count](#test-count-113-db-independent-tests-pass-in-18s)
 
 ---
 
@@ -808,17 +809,30 @@ The system's **plumbing is complete** — data flows from Tier 1 through Tier 4 
 - **numpy serialization fix** — `/analyze` endpoint no longer crashes with 500 (`numpy.bool_` → native `bool` in `asset_manager.size()`).
 - **Off-by-one fix** — LSE incremental ingest guard corrected to prevent permanent one-day lag in scheduled ingest.
 
-### Commits (5 total, unpushed)
+### What was added on 2026-08-31 (`88c3f22`)
+
+- **Execution state machine** (`arthaai/execution/state.py`) — Position lifecycle (FLAT → PENDING_ENTRY → OPEN → EXITING → CLOSED) + Portfolio aggregate with a rolling peak-to-trough equity-curve breaker.
+- **Promotion gate** (`arthaai/backtest/promotion.py`) — strict "All 3" criteria: Sharpe ≥ 1.0 **AND** max DD ≤ 20% **AND** beats B&H on OOS. `evaluate_promotion()` returns per-criterion pass/fail; `get_promotion_status()` reads the DB record.
+- **OOS split** (`arthaai/backtest/engine.py`) — `oos_slice(n_total, oos_pct=0.30)` and a `data_slice=` parameter on `run_backtest()`.
+- **`arthaai promote <symbol>` CLI** — runs an OOS backtest, applies the gate, saves to TimescaleDB; supports `--signal`, `--adx`, `--warmup`, `--limit`, `--dry-run`, `--save`.
+- **`signal_promotion` schema + DB layer** — table with `(symbol, signal)` PK; `upsert_signal_promotion`, `get_signal_promotion`, `list_qualified_symbols`, plus provider-preference helpers (`set_preferred_provider`, `get_preferred_provider`, `record_ingest_provider`).
+- **13 execution-state tests + 8 promotion tests** — state lifecycle, breaker behaviour, engine integration, OOS gate.
+
+### Commits (pushed to `origin/feat/arthaai-core`)
 
 | Commit | Description |
 |--------|-------------|
-| `ebadb2a` | Signal-conditioned Kelly sizing + trend/breakout signal layer |
-| `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
-| `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
-| `57abb1d` | Breakout live wiring + eval calibration + OPA fix + AGENTS.md |
+| `88c3f22` | Complete architecture status report + CLI, schema, DB-layer refactor |
+| `08183f9` | Execution state machine, equity-curve breaker, promotion gate |
+| `b822afe` | Green the branch against SPEC.md quality gates (Q1–Q3) |
+| `0b0c539` | Factor zoo and provider workflows |
 | `b0252a6` | 4-tier architecture status report (STATUS_REPORT.md) |
+| `57abb1d` | Breakout live wiring + eval calibration + OPA fix + AGENTS.md |
+| `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
+| `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
+| `ebadb2a` | Signal-conditioned Kelly sizing + trend/breakout signal layer |
 
-Uncommitted (ready to commit): LSE data provider, numpy fix, off-by-one fix, test_lse.py.
+Working tree clean; branch is level with its upstream.
 
 ### Test count: 113 DB-independent tests pass in ~18s
 
