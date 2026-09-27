@@ -2,11 +2,16 @@
 
 Computes Spearman rank correlation between factor values and forward returns,
 then categorises factors as alive / reversed / dead based on IC statistics.
+
+Multiple-testing control is mandatory here: evaluating hundreds of factors and
+keeping the best is how false discoveries get promoted. ``evaluate_factors``
+applies Benjamini-Hochberg FDR control across the family of factors.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -15,12 +20,17 @@ import pandas as pd
 _MIN_VALID_PER_DATE = 5
 
 
-def compute_ic_series(factor_df: pd.DataFrame, return_df: pd.DataFrame) -> pd.Series:
+def compute_ic_series(
+    factor_df: pd.DataFrame, return_df: pd.DataFrame, step: int = 1
+) -> pd.Series:
     """Compute daily Spearman rank correlation (IC) between factor values and returns.
 
     Args:
         factor_df: Factor values; index=date, columns=codes.
         return_df: Returns; index=date, columns=codes.
+        step: Subsample the IC series every ``step`` dates. Use ``step=horizon``
+            to suppress the autocorrelation from overlapping forward windows
+            (an embargo against inflating the t-statistic).
 
     Returns:
         IC series indexed by date.
@@ -45,9 +55,102 @@ def compute_ic_series(factor_df: pd.DataFrame, return_df: pd.DataFrame) -> pd.Se
 
     ic = ic[n_valid >= _MIN_VALID_PER_DATE]
     ic = ic.dropna()
+    if step > 1:
+        ic = ic.iloc[::step]
     if ic.empty:
         return pd.Series(dtype=float)
     return ic.astype(float)
+
+
+def t_to_p(t_stat: float) -> float:
+    """Two-sided p-value for a t-statistic (normal approximation)."""
+    return math.erfc(abs(t_stat) / math.sqrt(2.0))
+
+
+def benjamini_hochberg(p_values: list[float], alpha: float = 0.05) -> list[bool]:
+    """Benjamini-Hochberg step-up FDR control.
+
+    Returns a boolean mask (aligned to ``p_values``) marking discoveries. This is
+    the guard that stops "best of 445 factors" from being mistaken for edge.
+    """
+    m = len(p_values)
+    if m == 0:
+        return []
+    order = sorted(range(m), key=lambda i: p_values[i])
+    k_max = 0
+    for rank, idx in enumerate(order, start=1):
+        if p_values[idx] <= alpha * rank / m:
+            k_max = rank
+    accepted = [False] * m
+    for rank, idx in enumerate(order, start=1):
+        if rank <= k_max:
+            accepted[idx] = True
+    return accepted
+
+
+@dataclass
+class FactorICResult:
+    alpha_id: str
+    ic_mean: float
+    ic_std: float
+    ir: float
+    t_stat: float
+    p_value: float
+    ic_count: int
+    ic_positive_ratio: float
+    category: str
+    significant: bool = False
+
+
+def evaluate_factors(
+    factor_map: dict[str, pd.DataFrame],
+    return_df: pd.DataFrame,
+    *,
+    alpha: float = 0.05,
+    min_count: int = 20,
+    horizon: int = 1,
+) -> list[FactorICResult]:
+    """Evaluate many factors' rank-IC with Benjamini-Hochberg FDR control.
+
+    Args:
+        factor_map: ``{alpha_id: factor_df}`` (index=date, columns=symbols).
+        return_df: Forward returns, same shape/index as the factor frames.
+        alpha: FDR level for the BH procedure.
+        min_count: Minimum IC observations for a factor to be testable.
+        horizon: Forward-return horizon; also used as the IC subsample step so
+            overlapping windows don't inflate t-statistics.
+
+    Returns:
+        Results sorted by |IC mean| (descending). ``significant`` is True only
+        for factors surviving BH at ``alpha``.
+    """
+    results: list[FactorICResult] = []
+    for alpha_id, factor_df in factor_map.items():
+        ic = compute_ic_series(factor_df, return_df, step=max(1, horizon))
+        stats = compute_ic_stats(ic)
+        t = float(stats["t_stat"])
+        results.append(
+            FactorICResult(
+                alpha_id=alpha_id,
+                ic_mean=stats["ic_mean"],
+                ic_std=stats["ic_std"],
+                ir=stats["ir"],
+                t_stat=t,
+                p_value=t_to_p(t),
+                ic_count=stats["ic_count"],
+                ic_positive_ratio=stats["ic_positive_ratio"],
+                category=categorise(
+                    stats["ic_mean"], stats["ic_positive_ratio"], stats["ic_std"], stats["ic_count"]
+                ),
+            )
+        )
+
+    tested = [r for r in results if r.ic_count >= min_count]
+    mask = benjamini_hochberg([r.p_value for r in tested], alpha=alpha)
+    for r, sig in zip(tested, mask):
+        r.significant = sig
+
+    return sorted(results, key=lambda r: abs(r.ic_mean), reverse=True)
 
 
 def compute_ic_stats(ic: pd.Series) -> dict[str, float]:

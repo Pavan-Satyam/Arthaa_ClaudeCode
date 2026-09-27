@@ -1,937 +1,479 @@
 # ArthaAI — Architecture Status Report
 
-> Last updated: 2026-08-31 · Branch: `feat/arthaai-core` · 113 DB-independent tests passing in ~18s
+*Last revised: 2026-09-27 · version 0.1.0 · branch `feat/arthaai-core`*
+
+ArthaAI is a zero-trust multi-agent LLM framework for equities & commodities analysis.
+The deterministic quant layer computes every number; the LLM only synthesises and
+explains. This report is written **from the code**, not from intent: every "implemented"
+claim below was read out of the repository, and the verification results in
+[§8](#8-verification-log-live) were produced against the running Docker stack.
+
+**How to read this:** each tier separates *what's implemented* from *what's missing*,
+and marks verified vs. unverified. The single most important number in the whole
+system is **E3** — whether a signal beats buy-and-hold out-of-sample. It currently
+**fails** ([§8.3](#83-e3--the-edge-gate--fails)).
 
 ---
 
 ## Table of Contents
 
-- [Tier 1 — Interface & Ingress](#tier-1--interface--ingress)
-- [Tier 2 — Intelligence Core](#tier-2--intelligence-core)
-- [Tier 3 — Oversight & Sizing](#tier-3--oversight--sizing)
-- [Tier 4 — Action](#tier-4--action)
-- [Overall System Summary](#overall-system-summary)
-  - [What was added on 2026-08-25](#what-was-added-on-2026-08-25)
-  - [What was added on 2026-08-31](#what-was-added-on-2026-08-31-88c3f22)
-  - [Commits](#commits-pushed-to-originfeatarthaai-core)
-  - [Test count](#test-count-113-db-independent-tests-pass-in-18s)
+1. [Executive summary](#1-executive-summary)
+2. [System at a glance](#2-system-at-a-glance)
+3. [Tier 1 — Interface & Ingress](#3-tier-1--interface--ingress)
+4. [Tier 2 — Intelligence Core](#4-tier-2--intelligence-core)
+5. [Alpha Zoo — factor engine](#5-alpha-zoo--factor-engine)
+6. [Tier 3 — Oversight & Sizing](#6-tier-3--oversight--sizing)
+7. [Tier 4 — Action](#7-tier-4--action)
+8. [Verification log (live)](#8-verification-log-live)
+9. [Cross-cutting concerns](#9-cross-cutting-concerns)
+10. [Known issues & defects](#10-known-issues--defects)
+11. [Test inventory](#11-test-inventory)
+12. [CLI reference](#12-cli-reference)
+13. [Implementation by tier](#13-implementation-by-tier)
+14. [Remaining work](#14-remaining-work)
+15. [Commit history](#15-commit-history)
 
 ---
 
-## Tier 1 — Interface & Ingress
+## 1. Executive summary
 
-### What the blueprint planned
+**The plumbing is complete; the edge is not.**
 
-The architecture specifies Tier 1 as the secure entry point — how a request gets in safely. Three components:
+- Data flows end-to-end: ingest (provider chain with failover) → TimescaleDB →
+  LangGraph fan-out (DB/Quant/News/Alt agents) → Master LLM synthesis → Kelly sizing
+  → paper execution, all under OPA policy, circuit breakers, and configurable auth.
+- **E3 fails, live-verified.** On GLD, both `trend` and `breakout` are rejected across
+  two independent OOS windows (hit-rate 46–63%, no window consistently beats B&H with
+  Sharpe ≥ 1.0). No factor in the 442-strong zoo survives Benjamini-Hochberg FDR on a
+  28-asset cross-section.
+- **E2 is wired** (the factor signal now drives sizing via a dampen-only gate), but the
+  evidence says it should stay **off**: it lowered OOS Sharpe on GLD, and the factor
+  signal it consumes has no FDR-significant edge. See [§10](#10-known-issues--defects).
+- A genuine **data-corruption bug was found and fixed** this session: GLD/SLV carried
+  two bars per day (LSE `00:00` + yfinance `13:30`), which silently doubled their series
+  and distorted every backtest. 1095 duplicate bars were removed.
 
-1. **Web Dashboard** — type a ticker, see verdict + sizing + chart
-2. **FastAPI Gateway** — entry point with token auth + rate limiting
-3. **mTLS + OAuth 2.1** — encrypted service mesh, deploy-time hardening
+| Area | Verdict |
+|---|---|
+| Tier 1 — Interface & Ingress | ✅ implemented (JWT/OAuth 2.1, rate limits, CORS) |
+| Tier 2 — Intelligence Core | 🟡 agents work; Quant "edge" still unproven |
+| Alpha Zoo factor engine | 🟡 445 factors, 403 compute; no FDR-significant edge |
+| Tier 3 — Oversight & Sizing | ✅ Kelly + policy caps + cost-aware, exposure-matched promotion gate |
+| Tier 4 — Action | ✅ paper engine, stops, kill switch, audit; broker deferred by Law 3 |
+| **★ Edge (E1–E3)** | **🟡 E1/E2 wired · ❌ E3 fails** |
 
-The design rules for Tier 1:
-- Every endpoint behind bearer-token authentication (OAuth 2.1 / MCP access token)
-- Token-bucket rate limiting (slowapi)
-- In production, mTLS is terminated at the gateway (Apigee-style) ahead of the auth check
-- Secrets fetched from Vault (falls back to env if Vault is down)
-- Dashboard serves a browser session without the user handling a credential
-
-### What's implemented (today)
-
-#### Gateway (`gateway/app.py` — 129 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| FastAPI app with rate limiting | `slowapi` token-bucket, 10/min on `/analyze` | ✅ |
-| `/analyze/{symbol}` | Auth-required POST; dispatches to Tier 2 LangGraph orchestrator; returns verdict + allocation + evidence | ✅ |
-| `/ohlcv/{symbol}` | Auth-required GET; loads from TimescaleDB, ingests on demand if missing; returns candlestick bars | ✅ ← fixed this session |
-| `/health` | Open; pings TimescaleDB; reports degraded if down | ✅ |
-| `/` (dashboard) | Sets httpOnly cookie with gateway token; serves HTML dashboard | ✅ ← fixed this session |
-
-#### Auth (`gateway/auth.py` — 54 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| `require_principal` dependency | Checks `Authorization: Bearer` header (API clients) **and** `arthaai_token` httpOnly cookie (dashboard browser sessions) | ✅ ← new this session |
-| Token validation | Compares against Vault secret (falls back to `ARTHAAI_GATEWAY_TOKEN` env) | ✅ |
-| 401 on missing token | `HTTPException` with `WWW-Authenticate: Bearer` header | ✅ |
-| 403 on invalid token | Separate HTTPException for bad credential | ✅ |
-| `Principal` dataclass | Carries `subject` + `scopes` (currently `("analyze:read",)`) | ✅ |
-
-#### Dashboard (`gateway/static/dashboard.html` — 155 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Candlestick chart | Canvas-based, renders OHLCV bars with green/red coloring | ✅ |
-| Symbol input + Analyze button | Calls `/analyze/{symbol}`, renders verdict + allocation + evidence | ✅ |
-| Token handling | No token in JS — `fetch()` sends `credentials: "same-origin"` (httpOnly cookie) | ✅ ← fixed this session |
-| Verdict display | Direction (color-coded), confidence %, LLM source, rationale text | ✅ |
-| Allocation display | Kelly fraction %, policy-cap note, evidence table | ✅ |
-| Evidence table | Per-agent rows: technical trend, μ/σ, news sentiment, physical/alt | ✅ |
-
-#### Config (`config.py` — 83 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| `dev_mode` setting | Controls cookie `secure` flag and dev-token fallback behavior | ✅ ← new this session |
-| `dev_mode=True` (default) | `secure=False` (HTTP ok), `dev-token` fallback allowed | ✅ |
-| `dev_mode=False` (production) | `secure=True` (requires TLS), refuses to serve with `dev-token` fallback | ✅ |
-| Vault integration | Gateway token fetched via `vault.get_secret()` with env fallback | ✅ |
-
-#### Test coverage (`test_gateway.py` — 7 tests, 83 lines)
-
-| Test | What it verifies |
-|------|-----------------|
-| `test_analyze_requires_bearer` | 401 without auth |
-| `test_analyze_rejects_non_bearer` | 401 on `Basic` scheme |
-| `test_health_is_open` | Health check works without auth |
-| `test_ohlcv_requires_auth` | 401 without auth (was open before) |
-| `test_ohlcv_rejects_non_bearer` | 401 on `Basic` scheme |
-| `test_dashboard_sets_httponly_cookie` | Cookie is set, `httponly` flag present, no token in HTML |
-| `test_dashboard_cookie_authenticates_ohlcv` | Cookie from dashboard authenticates `/ohlcv` |
-| `test_dashboard_refuses_dev_token_in_production` | `dev_mode=False` + no token → 500 (refuses to serve) |
-
-### What was fixed this session
-
-Two security holes were closed:
-
-1. **`/ohlcv/{symbol}` was unauthenticated** — anyone could fetch OHLCV data and trigger ingestion. Now requires `Depends(require_principal)`.
-
-2. **Token was injected into HTML** — the dashboard replaced `__ARTHAAI_TOKEN__` in the page source with the actual bearer token, visible in browser devtools / page source / any proxy cache. Now the dashboard sets an httpOnly cookie (`arthaai_token`) with `samesite="strict"`, and the JS never touches the token — `fetch()` with `credentials: "same-origin"` sends the cookie automatically.
-
-Two production-hardening gaps were also closed:
-
-3. **`secure=False` was hardcoded** — now derived from `dev_mode` config: `secure=not s.dev_mode`. Production (`dev_mode=False`) enforces TLS-only cookies.
-
-4. **`dev-token` fallback was unconditional** — now refused when `dev_mode=False` and no real token is available from Vault/env. The dashboard raises `RuntimeError` instead of serving with a guessable credential.
-
-A serialization bug was fixed on 2026-08-25:
-
-5. **`numpy.bool_` serialization crash** — the `/analyze` endpoint returned 500 for all assets because `Allocation.capped_by_policy` was a `numpy.bool_` that Pydantic couldn't serialize to JSON. Fixed by wrapping with `float()` and `bool()` in `asset_manager.size()` so all Allocation fields are native Python types.
-
-### What can be improved
-
-#### Authentication & Identity
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No real OAuth 2.1 / OIDC integration** — currently a static bearer token compared against a Vault secret. The blueprint calls for short-lived OAuth 2.1 / MCP access tokens validated against an identity provider (Keycloak / Auth0 / Okta). | A stolen token is valid indefinitely (no expiry, no refresh, no revocation). Single-tenant — no per-user identity, no RBAC beyond `analyze:read`. | Medium — wire `require_principal` to validate a JWT against a JWKS endpoint, add token refresh + revocation |
-| **No token expiry or rotation** — the gateway token is static. | Compromised tokens never expire. | Low — add `exp` claim validation + periodic Vault rotation |
-| **No per-user identity** — `Principal.subject` is always `"investor"`. | No audit trail per user; no RBAC beyond the single `analyze:read` scope. | Medium — parse JWT `sub` claim into `Principal.subject`, add scope-based access control |
-| **mTLS not implemented** — deferred to deployment infrastructure. The blueprint specifies mTLS termination at the gateway. | Traffic between client and gateway is not mutually authenticated in dev. In production this is handled by the API gateway / load balancer. | High — this is infra (Istio / Linkerd / nginx), not application code |
-
-#### Rate Limiting
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **Rate limit only on `/analyze`** — `/ohlcv` and `/health` have no rate limit. | A malicious session could hammer `/ohlcv` to trigger repeated ingest calls (yfinance rate limits) or exhaust DB connections. | Low — add `@limiter.limit` to `/ohlcv` |
-| **Rate limit is per-IP, not per-token** — `slowapi` uses `get_remote_address`. Behind a NAT/load balancer, all users share one IP. | A single noisy user can exhaust the limit for everyone; or conversely, many users behind one NAT can exceed limits individually. | Low — change `key_func` to use the authenticated `Principal.subject` |
-| **No burst capacity** — flat 10/min. | No headroom for legitimate burst traffic (e.g., loading a dashboard with chart + analysis). | Low — switch to a two-tier limit (e.g., 10/min sustained + 30 burst) |
-
-#### Dashboard UX
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No real-time updates** — the dashboard is a one-shot fetch. The blueprint implies a live console. | User must click Analyze each time; no streaming price updates, no live verdict refresh. | Medium — add WebSocket or SSE for streaming OHLCV + verdict updates |
-| **No multi-asset view** — single symbol at a time. The `arthaai compare` command exists in CLI but not in the dashboard. | No way to compare signals across assets from the UI. | Medium — add a comparison table view |
-| **No error retry or loading state** — the "running multi-agent pipeline…" text is the only feedback. | LLM calls can take 10-30s with no progress indicator. | Low — add a progress bar or per-agent status stream |
-| **Chart is Canvas-based, not interactive** — no zoom, pan, tooltip, or crosshair. | Limited chart interaction; hard to inspect specific candles. | Medium — replace with lightweight charting lib (e.g., lightweight-charts) |
-| **No allocation history or backtest view** — the backtest engine exists but isn't exposed in the dashboard. | No way to see historical performance or signal edge from the UI. | Medium — add a backtest panel |
-
-#### API Surface
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No WebSocket streaming** — the blueprint implies real-time data flow, but the gateway is request-response only. | No push updates; client must poll. | Medium — add WebSocket endpoint for streaming verdicts / OHLCV |
-| **No `/backtest` endpoint** — the backtest engine is only accessible via CLI. | Can't run backtests from the gateway / dashboard. | Low — add POST `/backtest/{symbol}` endpoint |
-| **No `/eval` endpoint** — the LLM eval harness is only accessible via CLI. | Can't evaluate LLM quality from the gateway. | Low — add GET `/eval` endpoint |
-| **No `/compare` endpoint** — the signal comparison is only in CLI. | Can't compare signals from the gateway. | Low — add GET `/compare?symbols=...` endpoint |
-| **No OpenAPI customization** — the FastAPI auto-docs are default. | No custom schemas, examples, or response models beyond `AnalyzeResponse`. | Low — add response models for all endpoints |
-
-#### Security Hardening
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No CORS policy** — the FastAPI app has no CORS middleware. | Browser clients from other origins can't call the API; or in production, all origins are allowed by default (no explicit deny). | Low — add `CORSMiddleware` with explicit allowed origins |
-| **No CSRF protection for cookie auth** — `samesite="strict"` mitigates most CSRF, but not same-site subdomain attacks. | A malicious subdomain could potentially craft requests that send the cookie. | Low — add CSRF token header validation for state-changing endpoints |
-| **No request signing / replay protection** — every request is a fresh call. | No way to detect replay attacks or tampered requests. | Medium — add HMAC request signing |
-| **No audit log** — auth decisions (allow/deny) are not logged. | No trail of who called what and when. | Low — add structlog audit entries in `require_principal` |
-
-### Tier 1 Summary
-
-| Area | Planned | Implemented | Gaps |
-|------|---------|-------------|------|
-| FastAPI gateway | ✅ | ✅ | — |
-| Token auth (bearer) | ✅ | ✅ | No real OAuth 2.1 / JWT validation |
-| Cookie auth (dashboard) | ✅ | ✅ ← fixed | — |
-| Rate limiting | ✅ | ✅ (partial) | Only `/analyze`, per-IP not per-token |
-| Dashboard UI | ✅ | ✅ | No real-time, no multi-asset, no backtest view |
-| mTLS + OAuth 2.1 | ✅ (deferred) | ○ seam ready | Deployment infra — needs k8s / service mesh |
-| Vault secrets | ✅ | ✅ | — |
-| Production hardening | ✅ | ✅ ← fixed | `dev_mode` config, secure cookies, dev-token refusal |
-
-**Implementation: ~85% of the Tier 1 blueprint.**
+**Overall: ~80% of the blueprint is code-complete; 0% of the release gate is met** —
+because the release gate is gated on E3, and E3 is a research result, not a checkbox.
 
 ---
 
-## Tier 2 — Intelligence Core
+## 2. System at a glance
 
-### What the blueprint planned
+| Metric | Value |
+|---|---|
+| Python source files | 50 (excl. generated zoo) |
+| Test files | 25 |
+| Tests passing (DB-independent) | **220** (+1 deselected `health`) |
+| CLI commands | 19 |
+| Registered factor alphas | **445** (alpha101 101, gtja191 190, qlib158 154) |
+| DB symbols with OHLCV | ~40 |
+| Quality gates | `compileall` clean · correctness lint clean · CI workflow defined |
 
-Tier 2 is where analysis and data live — the brain of the system. The architecture specifies:
+### Data flow
 
-**Orchestration:**
-1. **LangGraph Orchestrator** — deterministic DAG with shared GraphState; same path every run
-2. **Kafka/Redpanda Bus** — event bus for fan-out and ingestion decoupling
-3. **StateStore** — GraphState where every agent's findings converge
-
-**Agents (fan-out workers):**
-4. **DB_Agent** — deterministic indicators (SMA/RSI/trend)
-5. **Quant_Agent ★** — "Alpha-Zoo factor engine → tabular signal model. The edge lives here." This was flagged as "build next" in the architecture doc.
-6. **News_Agent** — Qdrant hybrid search with "real embeddings + live feed" (was partial)
-7. **Alt_Agent** — satellite/cargo data (Kpler, Ursa) — paid feeds, deferred
-8. **Correlation Regime** — detects "risk-off fusion"; risk context to the Brain — "build next"
-
-**Master LLM:**
-9. **Master Reasoning LLM** — explains and resolves conflicts. Chain: Gemini → local → Claude → offline. **Never predicts a number.**
-
-**Data layer:**
-10. **yfinance → TimescaleDB** — OHLCV hypertable, SQL-native aggregates
-11. **Qdrant** — news vectors, per-asset filtered
-
-**Design rules:**
-- Deterministic quant layer computes all numbers; LLM only synthesises
-- Kelly sizing runs on statistics, never on LLM-invented probabilities
-- Circuit breakers on every external dependency
-- OPA policy enforcement on every agent tool call
-
-### What's implemented (today)
-
-#### LangGraph Orchestrator (`orchestration/graph.py` — 86 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| StateGraph with GraphState | `StateGraph(GraphState)` — TypedDict with `db`, `quant`, `news`, `alt`, `verdict`, `allocation` | ✅ |
-| Fan-out: ingest → 4 agents | Edges from `ingest` to `db_agent`, `quant_agent`, `news_agent`, `alt_agent` | ✅ |
-| Converge: agents → master_llm | Each agent edge → `master_llm` (the State Store join) | ✅ |
-| Sequential: master_llm → asset_manager → END | Edge chain after the join | ✅ |
-| `analyze(symbol)` entry point | Builds graph, invokes with initial state, returns final GraphState | ✅ |
-| `skip_ingest` flag | Skips yfinance fetch when data already in TimescaleDB | ✅ |
-
-#### GraphState (`orchestration/state.py` — 21 lines)
-
-| Field | Written by | Read by |
-|-------|-----------|---------|
-| `symbol` | initial state | all agents |
-| `skip_ingest` | initial state | `_ingest` node |
-| `db` | `db_agent.run()` | `master_llm`, dashboard |
-| `quant` | `quant_agent.run()` | `master_llm`, `asset_manager` |
-| `news` | `news_agent.run()` | `master_llm`, dashboard |
-| `alt` | `alt_agent.run()` | `master_llm`, dashboard |
-| `verdict` | `master_llm.reason()` | `asset_manager`, dashboard |
-| `allocation` | `asset_manager.size()` | dashboard |
-
-#### DB_Agent (`agents/db_agent.py` — 68 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| OHLCV load from TimescaleDB | `timescale.load_ohlcv(symbol)` | ✅ |
-| SMA-20, SMA-50, RSI-14 (Wilder) | `indicators.sma()`, `indicators.rsi()` | ✅ ← fixed |
-| ADX-14 regime classification | `indicators.adx(high, low, close)` → trending / weak-trend / choppy | ✅ ← new |
-| Signal selector (ADX-driven) | ADX ≥ 25 → `breakout_signal`; else → `trend_signal` | ✅ ← new |
-| `signal_class` in output | Reports "trend" or "breakout" so downstream agents match | ✅ ← new |
-| OPA authorization | `authorize_tool(IDENTITY, "load_ohlcv")` | ✅ |
-| Empty-data fallback | Returns `{"available": False, "reason": ...}` | ✅ |
-
-#### Quant Agent (`agents/quant_agent.py` — 50 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Annualised return/variance/volatility | `indicators.annualised_stats(close)` | ✅ |
-| Signal-conditioned Kelly inputs (W, R) | `indicators.signal_kelly_stats()` — the signal's actual hit rate and payoff, not the asset's unconditional daily win rate | ✅ ← new |
-| Signal class matches db_agent | Uses same `BREAKOUT_ADX_THRESHOLD` from `indicators.py`; breakout path uses `breakout_positions` (O(n)) | ✅ ← new |
-| `signal_class` in output | So the Asset Manager knows which signal produced the Kelly stats | ✅ ← new |
-| OPA authorization | `authorize_tool(IDENTITY, "compute_stats")` | ✅ |
-
-#### News Agent (`agents/news_agent.py` — 35 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Qdrant hybrid search | Hard ticker filter → semantic similarity via `qdrant.hybrid_search()` | ✅ |
-| Embeddings | `fastembed BAAI/bge-small-en-v1.5` (local ONNX, 384-dim); falls back to deterministic hash if fastembed is not installed | ✅ ← fixed |
-| Sentiment aggregation | Average sentiment across top-5 hits; label = bullish/bearish/mixed | ✅ |
-| Circuit breaker | `guarded("qdrant", _search, fallback=list)` — degrades to empty on outage | ✅ |
-| OPA authorization | `authorize_tool(IDENTITY, "hybrid_search")` | ✅ |
-
-#### Alt Agent (`agents/alt_agent.py` — 38 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Synthetic physical signals | Hardcoded per-commodity ETF stubs (USO, GLD, SLV, DBC) | ○ stub |
-| Equity abstention | Returns `{"available": False}` for non-commodity ETFs | ✅ |
-| OPA authorization | `authorize_tool(IDENTITY, "external_api")` | ✅ |
-
-#### Master Reasoning LLM (`agents/master_llm.py` — 226 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Provider chain | `anthropic → gemini → local → offline` (configurable via `ARTHAAI_LLM_CHAIN`) | ✅ |
-| Circuit breaker per provider | `guarded(f"llm:{name}", ...)` — trips after 3 failures, resets in 30s | ✅ |
-| Offline deterministic reasoner | Weighted evidence blend: technical (0.45) + news (0.30) + alt (0.25); direction threshold ±0.12; confidence = 0.5 + abs(score)/2 | ✅ |
-| Claude provider | Anthropic SDK; model `claude-sonnet-5`; vault-keyed | ✅ |
-| Gemini provider | Google REST API; model `gemini-2.5-flash`; thinkingBudget=0 to avoid JSON truncation | ✅ |
-| Local provider | OpenAI-compatible endpoint (Ollama/LM Studio/vLLM); model `llama3.1` | ✅ |
-| Verdict parsing | Lenient JSON extraction (fenced code blocks, surrounding prose); confidence clamped [0,1]; bad direction → neutral | ✅ |
-| System prompt | "You do NOT compute numbers; you synthesise… Return ONLY compact JSON…" | ✅ |
-| Rationale audit trail | Requires "I choose this because…" sentence | ✅ |
-| OPA authorization | `authorize_tool(IDENTITY, "llm_complete")` | ✅ |
-| `provider_status()` | Probes each provider in the chain for reachability | ✅ |
-
-#### Data Layer
-
-**TimescaleDB (`db/timescale.py` — 100 lines)**
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Connection pooling | `@contextmanager` connection factory | ✅ |
-| `ensure_asset()` | Auto-registers any ticker (FK constraint) | ✅ |
-| `upsert_ohlcv()` | INSERT ON CONFLICT DO UPDATE; idempotent re-ingest | ✅ |
-| `load_ohlcv()` | Recent N bars ascending by time | ✅ |
-| `asset_meta()` | Returns name, asset_class, exchange | ✅ |
-| `latest_ts()` | Last bar timestamp (for incremental ingest) | ✅ |
-| `ping()` | Returns TimescaleDB extension version | ✅ |
-
-**Qdrant (`db/qdrant.py` — 106 lines)**
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Collection creation | `ensure_collection()` with cosine distance, 384-dim | ✅ |
-| `upsert_news()` | Embeds headlines, stores with ticker/sentiment/source payload | ✅ |
-| `hybrid_search()` | Hard ticker filter (must) → semantic similarity query | ✅ |
-| Embedding model | `fastembed BAAI/bge-small-en-v1.5` (local ONNX); hash fallback | ✅ ← fixed |
-| `NewsHit` dataclass | headline, source, sentiment, score | ✅ |
-
-**yfinance ingest (`data/ingest.py` — 74 lines)**
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| 2-year lookback, daily bars | `yf.download(symbol, start=start, interval="1d")` | ✅ |
-| MultiIndex column handling | Flattens yfinance's nested columns | ✅ |
-| Auto-registration | `ensure_asset()` before upsert so any ticker works | ✅ |
-| Kafka event publish | Best-effort, never blocks ingestion | ✅ |
-| Friendly metadata | yfinance `shortName` + `quoteType` → asset class | ✅ |
-
-**London Strategic Edge (LSE) provider (`data/lse.py` — 118 lines)** ← new 2026-08-25
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| API candle fetch | `GET /v1/candles` with `X-API-Key` header; timeframes: 1m, 5m, 1h, 1d | ✅ ← new |
-| DataFrame conversion | LSE JSON → `ts, open, high, low, close, volume` (same schema as yfinance) | ✅ ← new |
-| Incremental ingest | Uses `latest_ts()` to fetch only new bars; off-by-one guard fixed | ✅ ← new |
-| 404 handling | Symbols not on LSE (e.g. USO) return empty → caller falls back to yfinance | ✅ ← new |
-| Asset auto-registration | `ensure_asset()` with friendly name + asset class before upsert | ✅ ← new |
-| API key security | Key in `.env` (gitignored), read via `os.environ.get`; never in code or URLs | ✅ ← new |
-| `arthaai ingest-lse` CLI | `arthaai ingest-lse GLD --days 730 --timeframe 1d` | ✅ ← new |
-
-**Kafka/Redpanda (`data/consumer.py` — 49 lines)**
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Consumer group | `arthaai-ingest-worker`, earliest offset | ✅ |
-| Event logging | structlog per-event | ✅ |
-| `consume(max_messages)` | Polled loop with configurable message count | ✅ |
-
-#### Test coverage for Tier 2
-
-| Test file | Tests | What it covers |
-|-----------|-------|---------------|
-| `test_llm.py` | 5 | Verdict parsing (fenced JSON, bad direction, surrounding prose), chain fallback to offline, chain always ends offline |
-| `test_indicators.py` | 15 | SMA, RSI bounds, annualised stats, trend signal labels, signal Kelly stats (trend, random walk, bearish wins, insufficient history), wr_from_tallies, vectorization equivalence, breakout path |
-| `test_eval.py` | 10 | Golden fixtures, rationale check, confidence bands, calibration score (perfect, anti, no-signal, too-few), offline passes all, aggregation |
-| `test_backtest.py` | 3 | Drawdown, monotonic, serialization |
-| `test_lse.py` | 4 | 404 returns empty, candle response parsing, missing API key raises, friendly meta mapping ← new |
-
-### What was fixed/upgraded this session
-
-| Component | Before | After |
-|-----------|--------|-------|
-| RSI | Plain rolling mean (wrong) | Wilder smoothing via `_wilder_rma()` |
-| `trend_signal` | Bare SMA-20/50 cross (whipsaws) | Multi-timeframe: SMA-20/50 + SMA-200 filter + ROC + RSI exhaustion + asymmetric shorts + flat-on-disagreement |
-| Signal Kelly stats | Asset's unconditional daily win rate | Signal-conditioned (W, R) — the signal's actual hit rate and payoff |
-| `_trend_signal_series` | O(n²) per-bar recomputation | O(n) vectorized; `trend_signal` delegates to it |
-| `breakout_signal` | No runtime caller (dead code) | Wired into `db_agent.run()` via ADX selector |
-| `breakout_positions` | — | Stateful O(n), look-ahead-safe, ADX gate |
-| ADX regime | — | `_adx_series()` + `adx()`; wired into db_agent + breakout gate |
-| Shared constants | Threshold/window duplicated per-agent | `BREAKOUT_ADX_THRESHOLD`, `BREAKOUT_ENTRY_WINDOW`, `BREAKOUT_EXIT_WINDOW` in `indicators.py` |
-| Embeddings | Hash fallback (cosine 0.22) | `fastembed BAAI/bge-small-en-v1.5` (cosine 0.98) |
-| Signed-return bug | `win_sum += rt` (bearish wins corrupt R) | `win_sum += abs(rt)` (direction-agnostic) |
-| LSE data provider | — (yfinance only) | `arthaai/data/lse.py` — LSE API provider with incremental ingest, 404 fallback, `ingest-lse` CLI command |
-| numpy serialization | `/analyze` crashed with 500 (`numpy.bool_` not JSON-serializable) | `float()` / `bool()` wrappers in `asset_manager.size()` — native Python types throughout |
-| Off-by-one in LSE incremental | — | Fixed: guard checks `last.date() >= now.date()` not `start.date() >= now.date()` |
-
-### What can be improved
-
-#### Quant Agent — "The edge lives here" (blueprint's words)
-
-This is the highest-priority area. The blueprint calls Quant_Agent the ★ star component with an "Alpha-Zoo factor engine" and "tabular signal model." Currently it only computes basic annualised stats + signal Kelly W/R.
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No multi-factor model** — the blueprint specifies an "Alpha-Zoo factor engine" with a tabular signal model. Currently Quant_Agent computes μ, σ², W, R and nothing else. | The quant layer is thin — no factor exposure analysis, no alpha decomposition, no cross-sectional ranking. Kelly sizing is based on a single signal's hit rate, not a factor portfolio's edge. | High — implement factor model: momentum, mean-reversion, volatility, value, quality factors; combine into a tabular signal with factor weights; compute Sharpe per factor |
-| **No correlation/regime detection** — the blueprint specifies a "Correlation Regime" agent that detects "risk-off fusion" and provides risk context to the Brain. | No regime-aware position sizing; no cross-asset correlation matrix; no tail-risk adjustment; the system doesn't know when correlations break down (2008, COVID, etc.) | High — add correlation regime agent: rolling correlation matrix, hierarchical clustering for regime detection, tail-risk overlay |
-| **No portfolio-level Kelly** — Kelly sizing is per-asset, not portfolio-aware. | Two perfectly correlated assets each get 5% → 10% correlated exposure, not 5% portfolio-level. No diversification benefit in sizing. | Medium — implement Kelly portfolio: covariance matrix → optimal weights → policy cap per-asset + portfolio cap |
-| **No volatility regime** — the quant layer computes σ but doesn't classify volatility regimes (low-vol, high-vol, crisis). | Kelly fraction doesn't adjust for regime; same 0.25x in calm and turbulent markets | Medium — add volatility regime: GARCH or rolling-vol percentile; adjust Kelly fraction by regime |
-| **No covariance estimation** — no rolling covariance between assets for portfolio construction. | Can't compute portfolio Kelly; can't detect diversification opportunities; can't hedge | Medium — add rolling covariance matrix (shrinkage estimator: Ledoit-Wolf) |
-| **No alpha decay tracking** — signals don't track how their edge decays over time. | A signal that worked 6 months ago may be stale; no mechanism to detect or retire it | Medium — add signal decay tracking: rolling hit rate over time windows; auto-retire signals with decayed edge |
-
-#### DB_Agent — technical indicators
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **Limited indicator set** — only SMA, RSI, ADX. No MACD, Bollinger Bands, ATR, OBV, VWAP, Ichimoku, Parabolic SAR. | The technical layer misses common indicators that traders use for confirmation and regime detection | Medium — add indicator library: MACD (momentum), Bollinger Bands (volatility), ATR (risk sizing), OBV/VWAP (volume), Ichimoku (trend) |
-| **No volume analysis** — volume is loaded but never used in any signal. | Breakouts on low volume are less reliable; no volume confirmation for any signal | Low — add volume analysis: OBV, VWAP, volume-weighted breakout confirmation |
-| **No multi-timeframe analysis** — signals use only daily bars. No weekly/monthly cross-reference. | A daily bullish signal may contradict a weekly bearish trend; no multi-timeframe confluence check | Medium — add multi-timeframe: load weekly + monthly bars, compute signals on each, confluence score |
-| **No support/resistance detection** — no automated S/R levels. | Breakout entries are Donchian-only; no dynamic S/R-based entry/exit | Medium — add S/R detection: pivot points, prior swing highs/lows, volume-profile levels |
-| **No candlestick patterns** — no pattern recognition (doji, engulfing, hammer, etc.). | Patterns are the most common technical confirmation traders use; completely absent | Medium — add pattern library: engulfing, doji, hammer, shooting star, three white soldiers |
-
-#### News Agent — "needs real embeddings + live feed"
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No live news ingestion** — only 8 hardcoded seed articles in Qdrant. The blueprint calls for live feeds from Permutable / LSEG / S&P. | News sentiment is static; no real-time news flow; the "live" analysis uses stale data | High — add live news ingestion: RSS/API feeds from financial news sources (Reuters, Bloomberg API, Finnhub, NewsAPI); real-time embedding + scoring pipeline |
-| **No web scraping** — no crawling of financial news sites, SEC filings, earnings transcripts, analyst reports. | The system can't access the vast majority of unstructured financial data available on the web | High — add web scraping: BeautifulSoup/Scrapy for financial news sites; SEC EDGAR for filings; earnings call transcripts from Motley Fool/Seeking Alpha |
-| **No real-time sentiment scoring** — sentiment is pre-scored in seed data. In production, it should come from the embedding + scoring pipeline. | No live sentiment classification; no NLP model for bullish/bearish/neutral scoring | Medium — add sentiment classifier: fine-tuned FinBERT or use LLM for zero-shot sentiment on each headline; store sentiment in Qdrant payload |
-| **No entity extraction** — no NER for companies, people, events, commodities mentioned in news. | Can't link news to specific assets programmatically; can't detect causal relationships | Medium — add NER: spaCy or LLM for entity extraction; link entities to ticker symbols |
-| **No event detection** — no classification of news events (earnings, M&A, regulatory, macro, etc.). | Can't weight news by event type (earnings beats matter more than general market commentary) | Medium — add event classification: fine-tuned classifier or LLM for event type; weight by event importance |
-| **No news decay** — all news is treated equally regardless of age. | A 2-week-old article has the same weight as today's breaking news | Low — add time-decay: exponential weighting by age; half-life configurable per event type |
-| **No source credibility scoring** — all sources weighted equally. | A Reddit post and a Reuters article have the same weight | Low — add source credibility: per-source weight; Reuters/Bloomberg > anonymous blogs |
-
-#### Alt Agent — "satellite / cargo (paid feeds)"
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **Completely stubbed** — hardcoded synthetic scores for 4 commodity ETFs. | No real physical data; the Alt_Agent contributes nothing real to the pipeline | High — requires commercial contracts (Kpler, Ursa, Vortexa); not a code gap but a procurement one |
-| **No alternative data sources** — no satellite imagery, no supply chain data, no ESG metrics, no social media sentiment (Reddit, Twitter/X). | Missing the "alternative data" edge that the blueprint specifies | High — integrate free alternative data: Google Trends (demand), satellite imagery (Sentinel/Copernicus), port/ship tracking (AIS) |
-| **No macro overlay** — no interest rates, yield curve, inflation, GDP, unemployment data. | The system can't see the macro environment; no regime context from economic data | Medium — add macro data: FRED API (free) for Treasury yields, CPI, unemployment; yield curve inversion as a regime signal |
-
-#### Master Reasoning LLM
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No fine-tuning** — the LLM uses a generic system prompt. No domain-specific fine-tuning for financial reasoning. | The LLM may hallucinate financial concepts; no guarantee it understands the evidence correctly; no measured quality on financial decision-making | High — fine-tune on golden fixtures: few-shot examples of correct evidence synthesis; RLHF on rationale quality; financial-specific prompt engineering |
-| **No chain-of-thought reasoning** — the prompt asks for JSON output directly. No structured reasoning before the verdict. | The LLM may jump to conclusions without showing its work; harder to audit | Medium — add CoT: ask the LLM to reason step-by-step before producing the verdict; parse the reasoning chain for audit |
-| **No confidence calibration training** — confidence is whatever the LLM says. No training to make it match actual accuracy. | The LLM may be overconfident (says 90% but is right 60% of the time) or underconfident; the eval harness measures this but doesn't fix it | Medium — add calibration training: Platt scaling or isotonic regression on the eval harness results; adjust confidence post-hoc |
-| **No multi-LLM ensemble** — only one LLM runs at a time (first in chain that works). No voting or aggregation. | No diversity of opinion; no error detection through disagreement; one LLM's bias dominates | Medium — add ensemble: run 2-3 LLMs in parallel, vote on direction, average confidence, flag disagreements in rationale |
-| **No streaming** — the LLM call blocks until complete. No streaming for long-running analysis. | Dashboard shows "running…" for 10-30s with no intermediate feedback | Medium — add SSE streaming: stream the LLM's reasoning as it generates; show per-agent status as it completes |
-| **No context window management** — the entire GraphState is sent as one prompt. No chunking or RAG for large states. | Large states may exceed context limits; the LLM may lose track of earlier evidence | Low — add context management: summarize each agent's output; truncate or compress; manage token budget per agent |
-| **No hallucination guard** — the LLM could invent indicators or numbers not in the evidence. | The "never predicts a number" rule is enforced by prompt, not by code | Medium — add output validation: check that the verdict references only evidence in the GraphState; reject hallucinated numbers |
-
-#### Data Layer
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No real-time data** — yfinance provides daily bars with a 1-day delay. LSE provides intraday (1m/5m/1h) but not via WebSocket. No live tick data. | The system is always one day behind on daily signals; can't react to intraday moves; no live signal generation | High — add real-time data: WebSocket feed (Alpaca, Polygon, IEX) or LSE WebSocket (paid plan); streaming ingest pipeline |
-| **No incremental ingest (yfinance)** — `ingest()` fetches 730 days every time. No upsert-only-new-bars. | Re-downloading 2 years of data every analyze is wasteful; yfinance rate limits kick in | Low — add incremental to yfinance path: use `latest_ts()` to fetch only bars after the last known timestamp. (LSE provider already has incremental ingest.) |
-| **No data quality checks** — no validation for gaps, outliers, splits, adjusted prices. | Bad data silently corrupts signals; stock splits produce false breakouts | Medium — add data quality: gap detection, split adjustment verification, outlier flagging, volume sanity checks |
-| **No provider failover chain** — LSE and yfinance are separate commands, not a chain. If LSE doesn't have a symbol (e.g. USO), the user must manually use yfinance. | No automatic failover; user must know which provider has which symbol | Low — add provider seam: try LSE first, fall back to yfinance on 404; single `ingest` command that auto-selects |
-| **No caching layer** — every analyze call re-loads from TimescaleDB. No Redis/memcached. | DB hit on every request; slow for high-frequency dashboard refreshes | Low — add caching: TTL cache on `load_ohlcv` (60s for daily bars); invalidation on ingest |
-| **No timeseries compression** — TimescaleDB hypertable but no compression policy. | Storage grows unbounded; old data is rarely accessed but takes full space | Low — add compression: TimescaleDB native compression on chunks older than 30 days |
-
-#### Latency
-
-| Component | Current latency | Bottleneck | Improvement |
-|-----------|----------------|------------|------------|
-| Ingest (yfinance download) | 3-10s per symbol | yfinance API rate limits | Incremental ingest (only new bars) — saves 80% |
-| DB_Agent (load + indicators) | 0.5-1s | TimescaleDB query | Add caching layer (60s TTL) |
-| Quant Agent (load + Kelly stats) | 0.5-1s | Redundant DB load + ADX recompute | Share DB load via GraphState (don't re-load) |
-| News Agent (Qdrant search) | 0.2-0.5s | Qdrant query + embedding | Cache embeddings; pre-compute per-symbol |
-| Master LLM (offline) | <100ms | — | Already fast |
-| Master LLM (Gemini) | 3-8s | API round-trip | Add streaming; cache by state hash |
-| Master LLM (local/Ollama) | 5-30s | Local inference | Use smaller model (qwen2.5:7b) or quantized |
-| Total pipeline (offline) | ~2s | Redundant DB loads | Share state between agents |
-| Total pipeline (LLM) | 5-15s | LLM API call | Streaming + caching + parallel agents |
-
-#### Orchestration
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **Agents share no state** — db_agent and quant_agent both load OHLCV independently from TimescaleDB. | Double DB query; ADX computed twice; data could differ if a bar arrives between loads | Medium — pass OHLCV through GraphState; quant_agent reads db_agent's `high`/`low`/`close` instead of re-loading |
-| **No conditional routing** — all 4 agents always run, even when data is unavailable. | Alt_Agent always runs but always returns stub/no-data for equities; wasted compute | Low — add conditional edges: skip alt_agent for equities; skip news_agent if Qdrant is down |
-| **No parallel agent optimization** — LangGraph runs agents concurrently but the GraphState merge is sequential. | Correct but could be faster with explicit parallel fan-out + barrier | Low — already parallel via LangGraph; verify with timing |
-| **No retry/backoff** — if an agent fails, the graph continues with partial state. No retry. | A transient DB failure causes missing evidence for the entire run | Medium — add retry with exponential backoff on DB-dependent agents |
-| **No streaming state updates** — the dashboard gets the full result at the end. No per-agent completion event. | User waits 10-30s with no feedback; can't show agent-by-agent progress | Medium — add SSE: stream state updates as each agent completes |
-
-### Tier 2 Summary
-
-| Area | Planned | Implemented | Gaps |
-|------|---------|-------------|------|
-| LangGraph orchestration | ✅ | ✅ | No state sharing between agents; no conditional routing |
-| GraphState convergence | ✅ | ✅ | — |
-| DB_Agent (indicators + signal selector) | ✅ | ✅ ← upgraded | Limited indicators; no volume, no multi-timeframe, no patterns |
-| Quant Agent (Alpha-Zoo factor engine) | ★ "build next" | ◌ basic stats only | No factor model, no correlation regime, no portfolio Kelly, no covariance |
-| News Agent (real embeddings + live feed) | ✅ | ◐ embeddings fixed, no live feed | No live news; no scraping; no real-time sentiment; 8 seed articles only |
-| Alt Agent (physical data) | ○ deferred | ○ stub | Requires commercial contracts; no free alternative data |
-| Correlation Regime agent | ★ "build next" | ✗ not started | Not implemented — no regime detection, no cross-asset correlation |
-| Master Reasoning LLM | ✅ | ✅ | No fine-tuning; no CoT; no calibration training; no ensemble; no streaming |
-| TimescaleDB | ✅ | ✅ | No caching; no data quality; no compression |
-| Qdrant (hybrid search) | ✅ | ✅ ← fixed | Embeddings work; no live news flow |
-| yfinance ingest | ✅ | ✅ | No real-time; no incremental; no provider failover |
-| LSE data provider | ✅ | ✅ ← new | Free plan only (candles); no macro/bonds/options (paid); no provider failover to yfinance yet |
-| Kafka/Redpanda | ✅ | ✅ | Producer + consumer; no streaming pipeline |
-| Circuit breakers | ✅ | ✅ | — |
-| OPA policy enforcement | ✅ | ✅ | — |
-
-**Implementation: ~68% of the Tier 2 blueprint.** (↑ from 65% — LSE provider added)
+```
+ingest (provider chain: LSE → yfinance, incremental, SWR fallback)
+    │  fan-out (LangGraph)
+    ├── DB_Agent      → technical indicators + ADX regime signal selector
+    ├── Quant Agent   → μ / σ² / signal-conditioned Kelly inputs + factor signal
+    ├── News_Agent    → hybrid-search sentiment (Qdrant, circuit-breaker-guarded)
+    └── Alt_Agent     → physical signal (STUB)
+    │  converge → GraphState
+    ▼
+Master Reasoning LLM  → direction + confidence + rationale (provider chain → offline)
+    ▼
+Asset Manager Agent   → discrete Kelly (primary) + cont. Kelly (info) + factor gate
+                        + vol targeting + 5% policy cap → allocation
+    ▼
+Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss,
+                          equity-curve breaker, kill switch, JSONL audit log
+```
 
 ---
 
-## Tier 3 — Oversight & Sizing
+## 3. Tier 1 — Interface & Ingress
 
-### What the blueprint planned
+### Implemented
 
-Tier 3 is where position sizing and human oversight live — "how much, and who signs off." Three components:
+**Gateway (`arthaai/gateway/app.py`, 142 lines)**
+- FastAPI app, version `0.1.0`; served via `arthaai serve`.
+- Endpoints:
 
-1. **Asset Manager** — Kelly sizing + a **hard 5% policy cap** that overrides the model. The blueprint specifies both Kelly formulations:
-   - Discrete (binary): `f = W - (1-W)/R`
-   - Continuous (returns): `f* = (μ - r)/σ²`
-   - Fractional scaling (quarter-Kelly) per Busseti et al. (2016)
-   - Deterministic policy override that caps single-instrument exposure regardless of the probabilistic model
+  | Method | Path | Protection |
+  |---|---|---|
+  | `GET` | `/` | none (serves dashboard, sets httpOnly cookie) |
+  | `GET` | `/health` | none (pings TimescaleDB extension) |
+  | `GET` | `/ohlcv/{symbol}` | bearer/cookie auth · rate limit 60/min |
+  | `POST` | `/analyze/{symbol}` | bearer/cookie auth · rate limit 10/min |
 
-2. **Human Decision Gate** — advice-only today; a person approves before any action
+- **Rate limiting** (`slowapi`) keyed by `client_key` — a SHA-256 **hash of the bearer
+  token** (header or cookie), falling back to client IP. Keying on the credential means
+  a shared NAT doesn't pool limits; the raw token is never stored.
+- **CORS** (`ARTHA-509`): `CORSMiddleware` with origins from `ARTHAAI_CORS_ORIGINS`
+  (empty = same-origin only), credentials enabled.
+- `/ohlcv` lazily ingests via **`ingest_resilient`** when the DB has no bars.
 
-3. **Shadow Account Audit** — bias diagnostics; needs a manager's real trade history (deferred)
+**Auth (`arthaai/gateway/auth.py`, 133 lines)** — three modes, selected by config:
+1. **OAuth 2.1 / JWT** (`ARTHAAI_OAUTH_JWKS_URL` set): validates the bearer token as a
+   JWT — signature via the IdP JWKS, **`exp` required**, plus `iss`/`aud`. Requires the
+   optional `auth` extra (`pyjwt[crypto]`); clear 503 if absent.
+2. **Static token** (`ARTHAAI_GATEWAY_TOKEN`, from Vault or env): constant-time
+   `secrets.compare_digest`.
+3. **Unconfigured**: dev mode accepts any non-empty bearer; **production
+   (`dev_mode=False`) refuses with 503** rather than silently accepting anything.
 
-The blueprint's **three laws** are most relevant to Tier 3:
-- **Law 1**: Numbers are deterministic; the LLM only explains
-- **Law 2**: A reproducible graph, not an agent free-loop
-- **Law 3**: Nothing is trusted until it beats buy-and-hold — the backtest gate governs promotion to real money
+**Dashboard (`gateway/static/dashboard.html`, 155 lines)** — price/candles/verdict/
+allocation; token held in an httpOnly cookie (never in page source).
 
-### What's implemented (today)
+**Config (`arthaai/config.py`, 123 lines)** — env-driven `Settings`:
+`dev_mode`, `provider_chain`, `cb_fail_max`, `cb_reset_timeout`, `stale_max_age_days`,
+`kelly_fraction`, `max_single_instrument`, `risk_free_rate`, `factor_gate`,
+`factor_dampening`, `factor_epsilon`, `vol_target`, `vol_max_leverage`,
+`oauth_jwks_url`, `oauth_issuer`, `oauth_audience`, `oauth_algorithms`, `cors_origins`.
 
-#### Asset Manager (`agents/asset_manager.py` — 89 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Discrete Kelly formula | `f = W - (1-W)/R` | ✅ |
-| Continuous Kelly formula | `f* = (μ - r)/σ²` | ✅ |
-| Quarter-Kelly fractional scaling | `raw * s.kelly_fraction` (0.25x default) | ✅ |
-| 5% hard policy cap | `min(fractional, s.max_single_instrument)` (0.05) | ✅ |
-| Discrete Kelly as primary driver | `raw = max(0.0, d_kelly)` — continuous Kelly is informational only | ✅ ← fixed this session |
-| No-edge → flat | `d_kelly(0.5, 1.0) = 0` → 0% allocation | ✅ ← fixed |
-| Negative-edge → flat (no shorting) | `max(0.0, d_kelly)` clamps negatives to 0 | ✅ ← fixed |
-| LLM confidence tempering | `w = 0.5 * w + 0.5 * confidence` — the LLM adjusts W but never overrides the cap | ✅ |
-| `Allocation` dataclass | Reports: discrete_kelly, continuous_kelly, raw_fraction, fractional, final_fraction, capped_by_policy, rationale | ✅ |
-| OPA authorization | `authorize_tool(IDENTITY, "kelly")` | ✅ |
-| Config-driven risk policy | `kelly_fraction`, `max_single_instrument`, `risk_free_rate` in `config.py` | ✅ |
-
-#### Kelly sizing behavior (verified this session)
-
-| Edge scenario | W | R | Discrete f | Quarter-Kelly | Final | Capped? |
-|---------------|---|---|-----------|---------------|-------|---------|
-| No edge | 0.50 | 1.00 | 0.000 | 0% | **0%** | No |
-| Modest edge | 0.55 | 1.10 | 0.141 | 3.52% | **3.52%** | No |
-| Strong edge | 0.72 | 1.60 | 0.545 | 13.6% | **5%** | Yes |
-| Negative edge | 0.40 | 0.80 | -0.350 | 0% | **0%** | No |
-
-#### Backtest engine's Kelly integration (`backtest/engine.py` — 145 lines)
-
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| Incremental signal-conditioned Kelly | Accumulates W/R within the walk-forward loop (O(1)/bar) — resolves prior bar's outcome at next bar (look-ahead-safe) | ✅ ← new |
-| Minimum-sample guard | Requires ≥10 signal-conditioned samples before using real W/R; else neutral (0.5, 1.0) → flat | ✅ ← new |
-| Shared W/R formula | Uses `indicators.wr_from_tallies()` — same formula as live path | ✅ ← new |
-| Kelly-sized strategy return | `strat_rets.append(frac * rt)` where frac is signed exposure × Kelly fraction | ✅ |
-| Long/short 100% exposure baseline | `dir_rets` — raw directional edge at full exposure | ✅ ← new |
-| Long-only 100% baseline | `lo_rets` — long-only filter at full exposure | ✅ ← new |
-| Buy & hold benchmark | `bh = close[-1] / close[warmup] - 1` | ✅ |
-| Sharpe ratio | `mean/std * √252` | ✅ |
-| Max drawdown | `max_dd(equity_curve)` | ✅ |
-| Hit rate | `signs_correct / trades` | ✅ |
-
-#### CLI commands
-
-| Command | Implementation | Status |
-|---------|---------------|--------|
-| `arthaai execute GLD` | Runs pipeline → paper order through Tier 4 guardrails | ✅ |
-| `arthaai backtest GLD --signal trend\|breakout --adx 25` | Walk-forward backtest with Kelly sizing | ✅ ← upgraded |
-| `arthaai compare --symbols GLD,SLV,USO,XOM,AAPL` | Multi-asset signal comparison table | ✅ ← new |
-| `arthaai eval --provider offline` | LLM eval harness (direction, rationale, calibration) | ✅ ← new |
-
-#### Test coverage for Tier 3
-
-| Test file | Tests | What it covers |
-|-----------|-------|---------------|
-| `test_kelly.py` | 8 | Discrete Kelly formula, continuous Kelly formula, negative edge → 0, policy cap overrides model, fraction never exceeds policy at confidence=1, discrete Kelly drives sizing under cap, no-edge → 0, negative-edge → 0 |
-| `test_backtest.py` | 3 | Max drawdown on known series, no drawdown when monotonic, result serialization |
-| `test_eval.py` | 10 | Golden fixtures, rationale check, confidence bands, calibration score (perfect, anti, no-signal, too-few), offline passes all, aggregation |
-
-### What was fixed this session
-
-| Component | Before | After |
-|-----------|--------|-------|
-| Kelly sizing driver | Continuous Kelly always won the branch (`c_kelly if variance > 0 else d_kelly`); 5% cap did 100% of sizing; discrete Kelly was dead code | Discrete Kelly is primary (`raw = max(0.0, d_kelly)`); continuous Kelly is informational only; Kelly drives sizing honestly |
-| Kelly inputs (W, R) | Asset's unconditional daily win rate (ignores signal edge) | Signal-conditioned — the signal's actual hit rate and payoff |
-| Signed-return bug | `win_sum += rt` — bearish wins accumulated negative returns, corrupting R negative → forced flat on correct bearish signals | `win_sum += abs(rt)` — direction-agnostic; bearish wins no longer corrupt R |
-| Kelly formula duplication | W/R formula in both `signal_kelly_stats` (live) and backtest engine (incremental) with divergent guards | Shared `wr_from_tallies()` helper — single source of truth |
-| Backtest Kelly accumulation | No incremental Kelly — each bar called `win_loss_ratio(c_win)` (O(n²)) | Incremental accumulation (O(1)/bar, look-ahead-safe, zero extra signal calls) |
-| Backtest baselines | Only strategy return + B&H | Added `long_short_return` (100% L/S) and `long_only_return` (100% L/O) for honest edge comparison |
-
-### What can be improved
-
-#### Kelly Sizing Math
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No portfolio-level Kelly** — sizing is per-asset, not portfolio-aware. Two perfectly correlated assets each get 5% → 10% correlated exposure. | No diversification benefit in sizing; correlated positions compound risk; no covariance estimation | High — implement Kelly portfolio: Σ (covariance matrix) → optimal weights `F* = Σ⁻¹(μ - r)`; policy cap both per-asset AND portfolio-level |
-| **No fractional Kelly by volatility regime** — the 0.25x fraction is static. In high-vol regimes, quarter-Kelly is still aggressive; in low-vol, it's conservative. | Same Kelly fraction in calm and crisis markets; no tail-risk adjustment | Medium — add dynamic Kelly fraction: `fraction = base × (target_vol / realized_vol)`; shrink in high-vol, expand in low-vol |
-| **No drawdown-adjusted Kelly** — the fraction doesn't reduce after a drawdown. | Kelly assumes you can tolerate full drawdown (which can be ~50% of capital); no drawdown-aware throttling | Medium — add drawdown throttle: `fraction = base × max(0, 1 - current_drawdown / max_drawdown)`; halts sizing as drawdown deepens |
-| **No correlation-aware position cap** — the 5% cap is per-instrument. 20 instruments at 5% each = 100% gross, but if all are correlated, effective risk is much higher. | No gross/net exposure limit; no beta-adjusted cap; portfolio can be fully correlated 100% | Medium — add portfolio-level constraints: max gross exposure (e.g. 50%), max net exposure (e.g. 30%), max beta-adjusted exposure |
-| **No Kelly fraction estimation** — the 0.25x is hardcoded. The "optimal" fraction depends on the signal's edge quality and the investor's risk tolerance. | Over-sizing weak signals (should be lower fraction) and under-sizing strong signals (should be higher fraction) | Medium — estimate optimal fraction from backtest: fraction = Kelly × (1 - variance_of_kelly_estimate); shrink when edge estimate is noisy |
-| **Continuous Kelly unused** — it's computed and reported but never influences anything. | Wasted compute; could serve as a cross-check or sanity bound | Low — add sanity check: if `discrete_kelly` and `continuous_kelly` disagree on direction, flag in rationale |
-
-#### Risk Controls & Guardrails
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No Value-at-Risk (VaR)** — no probabilistic risk estimate. | Can't say "with 95% confidence, the portfolio will not lose more than X% in one day"; no regulatory-compliant risk metric | Medium — add VaR: historical or parametric; 95%/99% confidence; daily and 10-day |
-| **No Conditional VaR (Expected Shortfall)** — no tail-risk metric. | VaR doesn't tell you how bad the worst cases are; ES does (average loss beyond VaR) | Low — add ES: average of losses beyond VaR threshold |
-| **No stress testing** — no scenario analysis (2008 crash, COVID, rate shock). | No idea how the portfolio performs in extreme scenarios; no regime-aware risk | Medium — add stress scenarios: historical replay (2008, 2020, 2022), synthetic shocks (rate +200bp, equity -20%) |
-| **No correlation stress** — no test of what happens when correlations go to 1 (crisis). | Diversification disappears in crises; the portfolio's risk is much higher than calm-period correlations suggest | Medium — add correlation stress: recompute portfolio risk with correlation matrix → 1.0 (all assets move together) |
-| **No sector/asset-class concentration limit** — no cap on exposure to a single sector. | Could hold 5% in 10 energy stocks = 50% energy concentration | Low — add sector concentration cap (e.g. max 25% per sector) |
-| **No leverage limit** — shorting is disabled but there's no explicit gross leverage cap. | If shorting is ever enabled, no guardrail prevents over-leverage | Low — add gross leverage cap (e.g. max 1.5x gross / 0.5x net) |
-
-#### LLM Confidence → Sizing Integration
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **Confidence blending is naive** — `w = 0.5 * w + 0.5 * confidence` is a 50/50 blend. The LLM's confidence has equal weight to the signal's historical hit rate. | The LLM can override the signal's edge estimate; a hallucinated high confidence doubles the position size | Medium — shrink the LLM's influence: `w = 0.8 * w + 0.2 * confidence`; or use the LLM confidence as a *gate* (below 0.4 → halve position) not a *blend* |
-| **No calibration of LLM confidence** — the LLM says "75% confident" but its actual accuracy at 75% confidence is unknown. | Overconfident LLMs inflate W → inflate position size; the eval harness measures this but doesn't feed back into sizing | Medium — apply Platt scaling / isotonic regression: map LLM confidence to actual accuracy using eval harness data; use the calibrated confidence for sizing |
-| **No confidence floor/ceiling on LLM influence** — the LLM can push W to 0 or 1. | An LLM saying 0% confidence → W halved → position zeroed; 100% confidence → W doubled → position potentially huge (capped by policy) | Low — clamp LLM influence: `confidence = max(0.3, min(0.9, confidence))` so it can nudge but not dominate |
-
-#### Human Decision Gate
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No approval workflow** — `arthaai execute` places a paper order immediately; no human approval step. | The blueprint specifies a human decision gate; currently the pipeline is fully automated (paper only, but still no checkpoint) | Medium — add approval gate: generate order draft → require explicit `--approve` flag or interactive prompt → then submit |
-| **No multi-signature** — no requirement for multiple approvals above a threshold. | Large positions should require more sign-off; currently no threshold | Low — add threshold: positions > 3% require secondary approval |
-| **No audit trail of approvals** — no log of who approved what and when. | No accountability; can't reconstruct the decision chain | Low — add structlog: log approval (who, what, when, rationale) |
-| **No notification system** — no email/Slack/webhook when a position is proposed. | Decisions happen in a vacuum; no collaborative review | Low — add webhook notification: post order draft to Slack/Teams for review |
-
-#### Shadow Account Audit (deferred)
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **Not started** — the blueprint specifies "bias diagnostics — needs a manager's real trade history." | No bias detection (anchoring, disposition effect, herding); no behavioral risk | High — requires a real manager's trade history; not a code gap but a data availability one. Could implement a framework: ingest trade log → detect patterns → report biases |
-
-#### Backtest Gate (Law 3: "Nothing is trusted until it beats buy-and-hold")
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| ~~**No automated promotion gate**~~ | ✅ **Implemented** — `arthaai promote <symbol>` runs an OOS backtest (last 30% of bars) and applies the strict "All 3" gate: Sharpe ≥ 1.0, max DD ≤ 20%, beats B&H. Results saved to TimescaleDB (`signal_promotion` table). | — |
-| ~~**No out-of-sample split**~~ | ✅ **Implemented** — `oos_slice()` in `backtest/engine.py` returns `(in_end, n_total)` for a 70/30 train/test split; `run_backtest(data_slice=...)` runs on the OOS slice. | — |
-| **No transaction costs** — the backtest doesn't model slippage, commissions, or spread. | Strategy returns are optimistic; real-world performance will be worse | Low — add cost model: commission (e.g. $1/trade), slippage (e.g. 5bps), spread (e.g. 1bp) |
-| **No multiple-comparison correction** — testing many signals inflates false discovery. | If you test 20 signals, one will look good by chance; no Bonferroni/BHY correction | Medium — add multiple testing correction: Bonferroni or Benjamini-Hochberg on p-values |
-| **No regime-conditional backtest** — the backtest runs across all regimes but doesn't split by ADX/volatility. | A signal might work only in trending markets; the aggregate backtest hides this | Low — add regime-conditional backtest: report metrics separately for trending/choppy/high-vol/low-vol |
-
-### Tier 3 Summary
-
-| Area | Planned | Implemented | Gaps |
-|------|---------|-------------|------|
-| Discrete Kelly formula | ✅ | ✅ ← fixed | — |
-| Continuous Kelly formula | ✅ | ✅ (informational) | Not used for sizing — could add as sanity bound |
-| Quarter-Kelly fractional scaling | ✅ | ✅ | Static 0.25x — no vol-regime adjustment |
-| 5% hard policy cap | ✅ | ✅ ← real | Per-asset only — no portfolio-level cap |
-| No-edge → flat | ✅ | ✅ ← fixed | — |
-| No shorting (negative → flat) | ✅ | ✅ ← fixed | — |
-| Signal-conditioned Kelly (W, R) | ✅ | ✅ ← new | — |
-| LLM confidence tempering | ✅ | ✅ | Naive 50/50 blend — should be calibrated |
-| Backtest with Kelly sizing | ✅ | ✅ ← upgraded | No transaction costs, no multiple-comparison correction, no regime-conditional backtest |
-| Automated promotion gate | ✅ | ✅ ← new | `arthaai promote <symbol>` runs OOS backtest, applies strict "All 3" gate, saves to DB |
-| OOS split (30%) | ✅ | ✅ ← new | `oos_slice()` in backtest engine |
-| Human decision gate | ✅ | ◐ advice-only | No approval workflow; no audit trail |
-| Shadow account audit | ✅ (deferred) | ✗ | Requires real trade history |
-| Portfolio-level Kelly | ✅ | ✗ | No covariance, no portfolio cap, no diversification benefit |
-| Risk metrics (VaR, ES) | ✅ | ✗ | No VaR, no Expected Shortfall, no stress testing |
-| Dynamic Kelly by regime | ✅ | ✗ | Static fraction; no vol-regime adjustment |
-
-**Implementation: ~85% of the Tier 3 blueprint.**
+### Missing / gaps
+- **mTLS is infrastructure, not code** (`ARTHA-110`) — documented as terminated upstream.
+- **JWT path not verified against a real IdP** (no `pyjwt` installed here; only the
+  dispatch, claim-mapping, and failure paths are unit-tested).
+- No refresh-token rotation; expiry is enforced but rotation is operational.
 
 ---
 
-## Tier 4 — Action
+## 4. Tier 2 — Intelligence Core
 
-### What the blueprint planned
+### Implemented
 
-Tier 4 is where decisions become actions — "simulated today; guard-railed always." Three components:
+**Orchestrator (`arthaai/orchestration/graph.py`, 86 lines)** — LangGraph fan-out/merge
+with nodes `_ingest → _db → _quant → _news → _alt → _master → _asset_manager`, plus
+`analyze()` used by the gateway and CLI. The ingest node now calls
+**`ingest_resilient`** (incremental, multi-provider) instead of the old yfinance-only path.
 
-1. **Paper Execution** — kill switch, stop-loss, 10% daily drawdown breaker, audit log
-2. **Live Broker** — IBKR / Alpaca. Only after edge is proven (deferred by Law 3)
-3. **Script Exporters** — Pine / MQL5 / TDX. Output feature, not edge (deferred)
+**GraphState (`orchestration/state.py`)** — `symbol`, `skip_ingest`, `db`, `quant`,
+`news`, `alt`, `verdict`, `allocation`.
 
-The blueprint's design rules for Tier 4:
-- **Programmable Guardrails**: deterministic anchors against probabilistic hallucinations — a max daily drawdown that halts ALL trading and a mandatory stop-loss on every position
-- These are **hard limits the LLM cannot override**
-- PAPER ONLY — never contacts a broker; records intended orders against a simulated account
-- Real execution (a broker MCP tool) plugs in behind the same guardrails
-- **Law 3 governs Tier 4**: "Nothing is trusted until it beats buy-and-hold" → live broker is gated by the backtest gate, not by code availability
+**DB_Agent (`agents/db_agent.py`, 68 lines)** — deterministic indicators (SMA20/50,
+RSI14, ADX14); **ADX regime selector**: `ADX ≥ 25` → Donchian breakout signal, else
+multi-timeframe trend filter. Runs under a SPIFFE identity via `authorize_tool`.
 
-### What's implemented (today)
+**Quant Agent (`agents/quant_agent.py`, 185 lines)**:
+- `run()` returns annualised `mu`/`variance`/`sigma` and `factor_signal`.
+- `factor_signal_series()` — a **causal, per-bar** aggregate (row-wise mean) of a fixed
+  a-priori factor set (`DEFAULT_FACTOR_IDS`), used by both live sizing and the backtest so
+  the two never diverge.
+- `_evaluate_factors()` — top-K factor display by |score|.
 
-| **Execution Engine** (`execution/engine.py`, `execution/state.py` — 362 lines) | | |
-| **Position state machine** (`execution/state.py`) | Per-symbol lifecycle: FLAT → PENDING_ENTRY → OPEN → EXITING → CLOSED | ✅ |
-| **Portfolio state machine** | Multi-position aggregate with rolling peak-to-trough equity-curve breaker | ✅ ← new |
-| **Equity-curve breaker** | Rolling peak-to-trough on portfolio equity curve; auto-reset on session boundary; 2 consecutive trips → SYSTEM_LOCKED | ✅ ← new |
-| **Programmable guardrails** | 10% peak-to-trough drawdown breaker (not just daily); mandatory stop-loss on every position; hard limits the LLM cannot override | ✅ ← upgraded |
-| **`ExecutionEngine`** | Plugs into Portfolio/Position state machine; `submit()` creates orders, seeds entry equity, deposits notional; reentry-safe (skips re-open) | ✅ ← upgraded |
-| **`mark_equity()`** | Updates equity and checks the equity-curve breaker | ✅ |
-| **`breaker_state`** | `"OPEN"` when breaker is tripped (DRAWDOWN_BREAKER or SYSTEM_LOCKED), `"CLOSED"` otherwise | ✅ |
-| **`record_entry_equity()`** | Seeds the equity curve peak at position-open equity (cash + position MTM at entry) | ✅ ← new |
-| **Paper execution** | Kill switch, stop-loss, drawdown breaker, audit log | ✅ |
-| **Order dataclass** | `symbol`, `side` (buy/sell), `notional`, `stop_loss`, `paper` | ✅ |
+**News_Agent (`agents/news_agent.py`, 35 lines)** — Qdrant hybrid search (ticker filter
++ similarity), wrapped in a circuit breaker with neutral fallback; returns
+`avg_sentiment` and labelled `bullish`/`bearish`/`mixed`.
 
-#### CLI Integration (`cli.py` — `execute` command)
+**Alt_Agent (`agents/alt_agent.py`, 38 lines)** — explicitly-labelled **STUB** synthetic
+physical signals for commodity ETFs; abstains for equities.
 
-| Feature | Implementation | Status |
-|---------|---------------|--------|
-| `arthaai execute GLD` | Runs full pipeline → places paper order through Tier 4 guardrails | ✅ |
-| Equity configurable | `--equity 100000` (default) | ✅ |
-| Neutral/allocation-zero handling | Prints "No paper order" and exits if direction is neutral or allocation is 0 | ✅ |
-| TradingHalted display | Shows red panel with drawdown details | ✅ |
-| Order display | Shows side, symbol, notional, fraction, stop-loss, breaker state, PAPER flag | ✅ |
-| Disclaimer | "Simulated order only — no broker contacted." | ✅ |
+**Master Reasoning LLM (`agents/master_llm.py`, 226 lines)** — provider chain
+`anthropic → gemini → local → offline` with circuit breakers; `_parse_verdict`,
+`_weighted_score`, `provider_status()`, `reason()`. Always ends at the deterministic
+offline reasoner, so **no API key is required**.
 
-#### Guardrail behavior (verified by tests)
+### Data layer
 
-| Scenario | What happens | Test |
-|-----------|-------------|------|
-| Bullish order, 5% allocation, $100K equity | BUY GLD, notional $5,000, stop @ $92.00 (8% below) | `test_order_sized_from_allocation` |
-| Bearish order, 3% allocation | SELL USO, stop @ $108.00 (8% above) | `test_sell_stop_above_entry` |
-| -11% daily drawdown | Breaker OPEN → `TradingHalted` raised | `test_drawdown_breaker_halts_trading` |
-
-#### Test coverage
-
-| Test file | Tests | What it covers |
-|-----------|-------|---------------|
-| `test_execution.py` | 3 | Order sizing from allocation, sell stop above entry, drawdown breaker halts trading |
-
-### What's implemented vs. planned
-
-| Blueprint element | Where | Status |
+| Module | Lines | Role |
 |---|---|---|
-| **Paper Execution** (kill switch, stop-loss, drawdown breaker, audit log) | `execution/engine.py`, `cli.py:execute` | ✅ implemented (but no audit log) |
-| **Live Broker** (IBKR / Alpaca) | — | ○ deferred (gated by Law 3) |
-| **Script Exporters** (Pine / MQL5 / TDX) | — | ○ deferred (output feature, not edge) |
+| `data/provider.py` | 197 | Provider registry, per-provider circuit breakers, stale-while-revalidate, per-asset preference, `ingest_resilient` |
+| `data/ingest.py` | 74 | yfinance fetch + Kafka publish |
+| `data/lse.py` | 118 | London Strategic Edge API client |
+| `data/universe.py` | 85 | Universe catalog sync/search |
+| `data/consumer.py` | 49 | Redpanda/Kafka ingest-event consumer (optional extra) |
 
-### What can be improved
-
-#### Execution Engine — Guardrails
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No position tracking** — the engine records orders but doesn't track open positions, fills, or P&L. | Can't compute current exposure, unrealized P&L, or portfolio-level drawdown; the breaker only fires on manually-marked equity, not on actual position P&L | High — add `Position` dataclass: track entry price, current price, unrealized P&L, quantity, stop-loss; mark-to-market on each bar; portfolio-level equity |
-| **No fill simulation** — orders are recorded but never "filled." No slippage, no partial fills, no rejection. | Paper P&L is meaningless — orders execute at the last close with zero slippage; real-world performance will differ | Medium — add fill simulator: slippage model (5bps for liquid, 20bps for illiquid), partial fill on large orders, rejection on limit orders |
-| **No stop-loss execution** — the stop-loss is calculated and stored but never triggered. | A position that drops 20% keeps losing; the 8% stop is never enforced in code | High — add stop-loss monitor: on each price update, check if stop is hit → generate exit order → realize loss |
-| **No daily reset** — `_day_start_equity` is set in `__post_init__` but never reset. | The "daily" drawdown breaker is actually a session-level breaker; it never resets at market open | Medium — add `reset_day()` method: reset `_day_start_equity` to current equity at start of each trading day |
-| **No kill switch** — the blueprint mentions a kill switch. The drawdown breaker halts new orders but doesn't close existing positions. | A kill switch should immediately flatten ALL positions when triggered, not just stop new entries | Medium — add `kill_switch()`: close all positions at market, set breaker to OPEN, require manual reset |
-| **No audit log** — the blueprint specifies an "audit log." Orders are in a list but not persisted or logged. | No trail of what was ordered, when, at what price, with what rationale; can't reconstruct the decision chain | Low — add structlog: log every order (symbol, side, notional, stop, timestamp, allocation rationale) |
-| **No max position count** — no limit on how many concurrent positions the engine can hold. | Could accumulate 20+ positions → over-diversified or over-leveraged | Low — add `max_positions` config: reject new orders when at limit |
-| **No max gross exposure** — no cap on total notional across all positions. | 5% × 20 positions = 100% gross exposure; no guardrail on portfolio-level risk | Low — add `max_gross_exposure` check: sum of all open notionals must not exceed cap |
-
-#### Paper Account Simulation
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No equity curve tracking** — the engine doesn't maintain a time series of equity. | Can't visualize performance over time; can't compute Sharpe, max drawdown, or CAGR on the paper account | Medium — add `equity_curve`: append equity mark on each bar; compute performance metrics on demand |
-| **No multi-asset portfolio** — the engine handles one symbol per `execute` call. No persistent portfolio across symbols. | Can't run a multi-asset strategy; can't compute portfolio-level metrics or diversification | High — add `Portfolio` class: holds positions across symbols, computes portfolio P&L, net/gross exposure, sector breakdown |
-| **No bar-by-bar simulation** — the engine is one-shot (submit order, done). No intraday simulation loop. | Can't backtest the execution layer; can't test stop-loss triggers, drawdown breaker behavior, or fill models | Medium — add `step(price_updates)`: mark-to-market, check stops, update breaker, generate exits |
-| **No commission/spread model** — paper orders have zero costs. | Strategy returns are optimistic; real-world performance will be worse by the cost drag | Low — add cost model: commission ($1/trade or 0.5bps), spread (1bp for liquid), slippage (5-20bps) |
-
-#### Live Broker Integration (deferred by Law 3)
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No broker API** — the engine is paper-only. The docstring mentions `._place()` as a plug-in point but it doesn't exist. | Can't execute real orders; paper-only indefinitely (correctly gated by Law 3) | High — add broker adapter: IBKR (ib_insync), Alpaca (REST), or generic FIX protocol; behind the same guardrails |
-| **No order management system (OMS)** — no state machine for order lifecycle (pending → submitted → partial → filled → cancelled). | Can't track real orders; can't handle rejections, modifications, or cancellations | Medium — add `OrderState` enum: PENDING, SUBMITTED, PARTIAL, FILLED, CANCELLED, REJECTED; track lifecycle transitions |
-| **No order types** — only market orders (buy/sell). No limit, stop, stop-limit, trailing stop, OCO (one-cancels-other). | No sophisticated execution strategies; can't implement TWAP/VWAP/iceberg orders | Medium — add order type support: limit (price), stop (trigger), stop-limit, trailing stop (% or ATR-based) |
-| **No connection management** — no broker session, reconnection, or heartbeat. | If a live broker connection drops, orders are lost; no reconnect logic | Medium — add connection manager: heartbeat, auto-reconnect, session state |
-| **No pre/post-market handling** — no session awareness. | Orders could be placed outside market hours; no awareness of halts, holidays, or half-days | Low — add session awareness: market hours check, holiday calendar, halt detection |
-
-#### Script Exporters (deferred)
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No Pine Script export** — the blueprint mentions Pine / MQL5 / TDX exporters. | Users can't deploy signals to TradingView, MetaTrader, or TongDaXin | Low — add `arthaai export --format pine|mt5|tdx`: generate indicator script from the current signal config |
-| **No signal serialization** — the signal parameters (SMA windows, ADX threshold, breakout windows) aren't serializable. | Can't export a self-contained script; the signal logic is in Python, not a portable format | Low — add signal config export: JSON/dict of all parameters; template renderer per target platform |
-
-#### Observability & Monitoring
-
-| Gap | Impact | Effort |
-|-----|--------|--------|
-| **No OpenTelemetry** — the blueprint lists it as "deferred" under cross-cutting. | No distributed tracing; can't see which agent took how long; no span per LLM call or DB query | High — add OpenTelemetry: trace per agent, span per LLM call / DB query / Qdrant search; export to Jaeger/Tempo |
-| **No metrics dashboard** — no Grafana/Prometheus integration. | Can't monitor latency, error rates, LLM costs, signal hit rates in real-time | Medium — add Prometheus exporter: request latency, agent durations, LLM token usage, breaker trips, order count |
-| **No alerting** — no notification when the drawdown breaker trips or an agent fails. | Failures are silent; the user only sees them when checking the CLI | Low — add alerting: webhook/Slack on breaker trip, agent failure, LLM circuit breaker open |
-| **No cost tracking** — LLM API costs aren't tracked. | Can't budget LLM spend; no per-run cost attribution | Low — add cost tracking: token count × price per model; cumulative spend per provider |
-
-### Tier 4 Summary
-
-| Area | Planned | Implemented | Gaps |
-|------|---------|-------------|------|
-| Paper execution engine | ✅ | ✅ | No position tracking, no fill simulation, no stop-loss triggering |
-| 10% daily drawdown breaker | ✅ | ✅ | No daily reset; no kill switch (flatten all positions) |
-| Mandatory 8% stop-loss | ✅ | ✅ (calculated) | Never triggered/executed — only stored on the order |
-| `arthaai execute` CLI | ✅ | ✅ | — |
-| `arthaai promote` CLI | ✅ | ✅ ← new | OOS backtest, strict "All 3" gate, DB save |
-| Audit log | ✅ | ✗ | No persistence; orders in-memory list only |
-| Live broker (IBKR / Alpaca) | ○ deferred | ✗ | Correctly gated by Law 3 — no real money to unproven signal |
-| Script exporters (Pine / MQL5 / TDX) | ○ deferred | ✗ | Low effort, but low value until signal has proven edge |
-| Position tracking & P&L | ✅ | ✅ | State machine + mark-to-market on `step()` |
-| Fill simulation (slippage, spread) | ✅ | ◐ | Fill dataclass has `slippage_bps`; no live fill simulator |
-| Multi-asset portfolio | ✅ | ✅ | `Portfolio` class holds positions across symbols; equity-curve breaker |
-| OpenTelemetry / observability | ○ deferred | ✗ | No tracing, no metrics, no alerting |
-
-**Implementation: ~65% of the Tier 4 blueprint.**
+### Missing / gaps
+- **Quant Agent is still basic statistics**, not the multi-factor model the blueprint
+  calls for. The factor signal exists and is validated for *evaluation*, but has not been
+  shown to predict returns ([§8.4](#84-factor-ic-bench--live)).
+- News is seeded/illustrative, not a live feed; Alt_Agent is a stub (paid feeds).
+- No correlation-regime detection (`ARTHA-215`) or cross-sectional composite wired into
+  sizing (`ARTHA-219`).
 
 ---
 
-## Overall System Summary
+## 5. Alpha Zoo — factor engine
+
+| Module | Lines | Role |
+|---|---|---|
+| `factors/base.py` | 454 | Operators: `rank`, `zscore`, `scale`, `delta`, `ts_*`, `decay_linear`, `safe_div`, … |
+| `factors/registry.py` | 352 | AST-scan discovery, lazy import, **helper injection**, health |
+| `factors/panel.py` | 132 | Wide OHLCV panel; derives `vwap`/`amount`; daily de-dup |
+| `factors/eval.py` | 242 | Rank-IC, t-stat, **Benjamini-Hochberg FDR**, IC embargo |
+
+- **445 alphas** load cleanly (`alpha101` 101, `gtja191` 190, `qlib158` 154).
+- **Loader helper injection**: many machine-extracted zoo files call helpers
+  (`safe_div`, `ts_std`, `np`, …) they never import. Rather than patch hundreds of
+  generated files, `registry._inject_helpers` supplies the `factors.base` namespace on
+  load (never overriding names the module defines). Combined with panel-derived
+  `vwap`/`amount` and removing a leaked junk line, single-symbol compute went
+  **341 → 403/445**; the remaining 42 are cross-sectional (undefined for one symbol).
+- `factors bench` evaluates the zoo with **BH FDR** and an explicit observation count.
+
+---
+
+## 6. Tier 3 — Oversight & Sizing
+
+### Implemented
+
+**Asset Manager (`agents/asset_manager.py`, 151 lines)** — deterministic, pure-function
+sizing:
+- **Discrete Kelly is the driver**: `f = W − (1−W)/R`; continuous Kelly is informational.
+- Quarter-Kelly scaling (`kelly_fraction=0.25`); **5% hard policy cap**; negative/zero
+  edge → **flat** (no shorting).
+- LLM `confidence` tempers `W` (50/50 blend), never overrides the caps.
+- **Factor gate (E2)** — optional, dampen-only: a factor signal that conflicts with a long
+  edge multiplies size by `factor_dampening` (0.5). Never amplifies; still capped.
+- **Volatility targeting (C)** — scales toward an annualised target vol, de-risk-only by
+  default (`vol_max_leverage=1.0`).
+- `Allocation` reports `discrete_kelly`, `continuous_kelly`, `fractional`,
+  `final_fraction`, `capped_by_policy`, `factor_multiplier`, `factor_signal`,
+  `vol_multiplier`, and a human rationale.
+
+**Backtest engine (`backtest/engine.py`, 243 lines)** — walk-forward, look-ahead-guarded
+(signal at bar *t* sees bars ≤ *t*; earns *t+1*'s return). Supports `data_slice`,
+`cost_bps` (turnover friction), `factor_gate`, `vol_target`. `oos_slice()` and
+**`oos_windows()`** (non-overlapping, most-recent-first).
+
+**Promotion gate (`backtest/promotion.py`, 137 lines)** — a signal is promoted only if it
+passes **all windows** and all three criteria:
+1. Sharpe ≥ `MIN_SHARPE` (1.0)
+2. Max drawdown ≤ `MAX_DD` (20%)
+3. **Beats B&H, exposure-matched** — compares the **100%-exposure long-only** return to
+   B&H, *not* the ~1–5%-exposure Kelly return (the old comparison was unwinnable by
+   construction). `combine_windows()` requires the intersection across windows.
+
+**Persistence (`db/timescale.py`, 281 lines)** — `signal_promotion` upsert/get and
+`list_qualified_symbols`; provider preference recording; **canonical daily timestamps**;
+`load_ohlcv` de-duplicates by day; `repair_daily_duplicates()`.
+
+### Missing / gaps
+- No portfolio-level Kelly (covariance/correlation), no VaR/Expected-Shortfall/stress
+  tests, no dynamic Kelly by vol regime (`ARTHA-309/310/311`).
+- Human decision gate is advice-only (no approval workflow).
+- Shadow-account bias audit deferred (needs real trade history).
+
+---
+
+## 7. Tier 4 — Action
+
+### Implemented
+
+**State machine (`execution/state.py`, 247 lines)**
+- `Fill`; `Position` lifecycle `FLAT → PENDING_ENTRY → OPEN → EXITING → CLOSED`.
+- `Portfolio` — multi-position aggregate with a **rolling peak-to-trough equity-curve
+  breaker**, `record_entry_equity()`, `mark_to_market()`, `add_proceeds()`,
+  `_is_new_session()`/`reset_day()` (calendar-day reset; trip counter escalates to
+  `SYSTEM_LOCKED`), and **`kill_switch()`** (flatten all + require manual unlock).
+
+**Engine (`execution/engine.py`, 231 lines)** — `ExecutionEngine` composes the state
+machine: `submit()` (creates order, seeds entry equity, attaches stop-loss),
+`step()` (mark-to-market + fire stops/targets), `exit_position()`, `kill_switch()`,
+`breaker_state`, `equity`. `TradingHalted` raised when halted.
+
+**Audit log (`execution/audit.py`, 59 lines)** — append-only JSONL (`AuditLog` +
+`read_audit`); engine records orders, fills (with `stop_loss`/`target`/`signal` reason),
+breaker trips, kill switch, unlock. Opt-in, so tests never write files.
+
+**Bar-loop simulation (`execution/simulate.py`, 177 lines)** — `simulate_symbol()` drives
+the engine bar-by-bar so **stop-losses actually fire**; look-ahead safe; long-only;
+returns fills, stop/target counts, realised P&L, equity curve. Exposed as
+`arthaai paper-sim`.
+
+### Missing / gaps
+- **Stop-loss is enforced in the paper-sim path, not in live `execute`** (single-order).
+- Fill simulation has no slippage/partial fills (`ARTHA-409`).
+- Live broker (IBKR/Alpaca) and Pine/MQL5/TDX exporters deferred by Law 3.
+- No OMS/order-state lifecycle for real orders.
+
+---
+
+## 8. Verification log (live)
+
+All results below were produced against the running Docker stack
+(`docker compose up -d`: TimescaleDB, Qdrant, Redpanda, OPA, Vault).
+
+### 8.1 Schema migration — ✅ verified
+`arthaai migrate` applied **11 idempotent statements** and **repaired 1095 duplicate
+daily bars**. Before: GLD 1008 rows / 504 days (2/day); after: 499 rows / 499 days.
+
+### 8.2 Promotion gate — ✅ verified (as a gate)
+`arthaai promote GLD --signal breakout --cost-bps 10` (two OOS windows):
+
+| Window | Sharpe | Long-only | B&H | Pass |
+|---|---|---|---|---|
+| 349–499 | −0.23 | −3.24% | −7.17% | ❌ |
+| 199–349 | **2.33** | +26.72% | +26.72% | ✅ |
+
+Combined verdict: **REJECTED (1/2 windows failed)**. Critically, window 199–349 *looks*
+promotable — the all-windows rule is what prevents cherry-picking. `trend` behaves the
+same. Rows persisted to `signal_promotion`.
+
+### 8.3 E3 — the edge gate — ❌ **FAILS**
+Neither signal beats B&H with Sharpe ≥ 1.0 in every OOS window. Hit-rate on the most
+recent window is ~46%; the signal has no reliable directional edge on GLD in this period.
+**Law 3 holds: nothing is promotable.**
+
+### 8.4 Factor IC bench — live
+`arthaai factors bench` over **28 assets × 442 factors** (horizon 1, BH FDR α=0.05):
+
+> **0 factors survive BH FDR**; 2 "alive", 10 "reversed", 430 dead.
+
+The IC machinery is correct and the multiple-testing correction is doing its job: with
+442 tests, the best t-stat (~−2.7) does not clear the BH threshold. **No cross-sectional
+factor shows a robust edge** in this universe/window.
+
+### 8.5 Volatility targeting — implemented, not beneficial here
+With `--vol-target 0.15`, window 199–349 Sharpe moved **2.33 → 2.11** (worse). Kept
+disabled by default.
+
+### 8.6 Factor-zoo repair — ✅ verified
+Single-symbol compute rose **341 → 403/445** after helper injection + `vwap`/`amount`
+derivation; the residual 42 are cross-sectional.
+
+---
+
+## 9. Cross-cutting concerns
+
+| Concern | Status |
+|---|---|
+| **Policy / identity** (`security/policy.py`, 39) | SPIFFE-style `AgentIdentity` + `authorize_tool`; **OPA-backed** with in-process least-privilege fallback (`security/opa.py`, 47) |
+| **Secrets** (`security/vault.py`, 46) | Vault read/write; env fallback |
+| **Resiliency** (`resiliency/breaker.py`, 44) | `pybreaker` per service; `guarded(name, fn, fallback)` |
+| **CI** (`.github/workflows/ci.yml`) | Q1 `compileall` · Q2 `pytest -k "not health"` · correctness-only lint (zoo excluded) |
+| **Observability** | ❌ no OpenTelemetry (`ARTHA-507`), no Prometheus (`ARTHA-508`) |
+| **Alerting / cost tracking** | ❌ not implemented |
+
+---
+
+## 10. Known issues & defects
+
+1. **E3 fails** — no promotable edge on GLD; no FDR-significant factor. This is the
+   blocking release-gate item and is a research problem, not a coding one.
+2. **Factor gate is ON by default but unjustified** — it lowered OOS Sharpe and its input
+   factor signal has no significant edge. **Recommendation: default `factor_gate=False`**
+   (law 3: don't trust an unproven signal). `ARTHAAI_FACTOR_GATE` re-enables it.
+3. **Duplicate daily bars (fixed)** — dual-provider ingest stored two timestamps/day for
+   GLD/SLV, corrupting backtests. Fixed at ingest (canonical midnight key), at read
+   (`load_ohlcv` de-dup), in `build_panel`, and via `arthaai migrate`.
+4. **qlib158 residual** — 42 cross-sectional factors are degenerate on a single symbol
+   (by design); they require a universe panel.
+5. **JWT unverified against a real IdP**; `pyjwt[crypto]` not installed here.
+6. **CI never run on GitHub**; work is **uncommitted** on the working tree.
+7. **qdrant client/server version mismatch** and **Vault 404s** — cosmetic, as before.
+8. `test_health` pings TimescaleDB; excluded from normal runs and CI.
+
+---
+
+## 11. Test inventory
+
+**220 passed, 1 deselected** (`test_health`, needs Docker) in ~8s.
+
+| File | Focus |
+|---|---|
+| `test_indicators.py` / `test_indicators_extra.py` | SMA/RSI/ADX/trend/breakout · ATR/Bollinger/MACD/OBV/VWAP |
+| `test_kelly.py` / `test_factor_gate.py` / `test_vol_target.py` | Discrete/continuous Kelly, policy cap, factor gate, vol targeting |
+| `test_backtest.py` / `test_backtest_costs.py` / `test_factor_gate_backtest.py` | Drawdown, cost model, gate wiring into the backtest |
+| `test_promotion.py` | Criteria, exposure-matched B&H, `oos_slice`, `oos_windows`, `combine_windows` |
+| `test_execution.py` / `test_execution_state.py` / `test_execution_audit.py` / `test_execution_sim.py` | Orders, state machine, breaker, kill switch, audit persistence, stop-loss simulation |
+| `test_provider.py` | Provider chain, incremental ingest, preference, DB-error fail-open |
+| `test_lse.py` / `test_universe` (in provider) | LSE parsing/fallback, universe |
+| `test_factors.py` / `test_factors_eval.py` | Base operators, panel, IC, BH FDR |
+| `test_eval.py` / `test_llm.py` | Golden fixtures, calibration, provider chain fallback |
+| `test_gateway.py` / `test_gateway_auth.py` | Auth required, cookie, JWT/static dispatch, rate-limit key |
+| `test_policy.py` | OPA allow/deny |
+| `test_migrate.py` / `test_daily_bars.py` | SQL splitter, schema contents · daily-bar canonicalisation/de-dup |
+
+---
+
+## 12. CLI reference
+
+| Command | Purpose |
+|---|---|
+| `health` | Ping TimescaleDB extension |
+| `migrate` | Apply idempotent schema + repair duplicate daily bars |
+| `universe` | Sync/search the asset universe catalog |
+| `ingest` / `ingest-lse` | Ingest bars (provider chain / LSE) |
+| `provider-status` | Show/set the stored provider for a symbol |
+| `analyze` | Run the full multi-agent pipeline |
+| `execute` | Place one paper order (`--audit` JSONL) |
+| `paper-sim` | Bar-by-bar paper simulation that fires stops/targets |
+| `backtest` | Walk-forward backtest (`--signal`, `--adx`, `--cost-bps`, `--vol-target`) |
+| `promote` | OOS promotion gate, multi-window, exposure-matched (`--windows`, `--cost-bps`, `--vol-target`) |
+| `compare` | Compare signals across assets |
+| `factors` | `list` / `show` / `bench` (BH-corrected IC) |
+| `eval` | Golden-fixture LLM eval |
+| `llm-status` | Probe the LLM provider chain |
+| `seed-news` / `seed-secrets` | Seed Qdrant news / Vault secrets |
+| `serve` | Run the Tier 1 gateway |
+| `consume` | Consume ingest events from Redpanda |
+
+---
+
+## 13. Implementation by tier
 
 | Tier | Planned | Implemented | Key gap |
-|------|---------|-------------|---------|
-| **Tier 1 — Interface & Ingress** | ~100% | ~87% | Real OAuth 2.1 / JWT; mTLS (infra); dashboard UX |
-| **Tier 2 — Intelligence Core** | ~100% | ~68% | Quant Agent factor engine (the ★ star); live news; correlation regime |
-| **Tier 3 — Oversight & Sizing** | ~100% | ~85% | Portfolio Kelly; risk metrics (VaR/ES) |
-| **Tier 4 — Action** | ~100% | ~65% | Fill simulation; audit log; live broker |
+|---|---|---|---|
+| **1 — Interface & Ingress** | ~100% | ~90% | IdP-verified JWT; mTLS (infra) |
+| **2 — Intelligence Core** | ~100% | ~75% | Quant factor edge; live news; Alt stub |
+| **Alpha Zoo** | ~100% | ~90% | 42 cross-sectional factors need a universe; no composite wired |
+| **3 — Oversight & Sizing** | ~100% | ~85% | Portfolio Kelly; VaR/ES; human gate |
+| **4 — Action** | ~100% | ~70% | Fill/slippage sim; live-loop stops; broker (deferred) |
+| **Cross-cutting** | ~100% | ~55% | OTel; Prometheus; alerting |
+| **★ Edge (E1–E3)** | ~100% | **E1✅ E2🟡 E3❌** | E3 is a research result |
 
-The system's **plumbing is complete** — data flows from Tier 1 through Tier 4 with auth, circuit breakers, OPA enforcement, and Kelly sizing. The **edge is thin** — the honest finding is that no signal beats B&H on raw return, and the Quant Agent (where "the edge lives") is basic stats, not the factor engine the blueprint calls for. The **priority sequence** the blueprint specifies is correct: prove the signal edge (Tier 2 Quant Agent) → automate the backtest gate (Tier 3 Law 3) → then build the execution layer (Tier 4) → then connect real money (gated by Law 3).
+---
 
-### What was added on 2026-08-25
+## 14. Remaining work
 
-- **LSE data provider** (`arthaai/data/lse.py`) — London Strategic Edge API integration with incremental ingest, 404 fallback, `ingest-lse` CLI command. 5 assets (GLD, SLV, XOM, AAPL, TSLA) ingested from LSE (501 bars each).
-- **numpy serialization fix** — `/analyze` endpoint no longer crashes with 500 (`numpy.bool_` → native `bool` in `asset_manager.size()`).
-- **Off-by-one fix** — LSE incremental ingest guard corrected to prevent permanent one-day lag in scheduled ingest.
+**Blocking the release gate**
+1. **E3** — find a signal with OOS edge (multi-asset, purged walk-forward, IC-weighted
+   composite), or accept that these signals should not trade.
+2. **Decide the factor-gate default** — flip to off unless E3 proves the factor signal.
+3. **Commit + push**, and let the new CI workflow run.
 
-### What was added on 2026-08-31 (`88c3f22`)
+**High value, low risk**
+4. Wire stop-losses into the live `execute` path; add slippage/partial-fill modelling.
+5. Expose `signal_promotion` in the gateway/UI; add a `promote --all` sweep.
 
-- **Execution state machine** (`arthaai/execution/state.py`) — Position lifecycle (FLAT → PENDING_ENTRY → OPEN → EXITING → CLOSED) + Portfolio aggregate with a rolling peak-to-trough equity-curve breaker.
-- **Promotion gate** (`arthaai/backtest/promotion.py`) — strict "All 3" criteria: Sharpe ≥ 1.0 **AND** max DD ≤ 20% **AND** beats B&H on OOS. `evaluate_promotion()` returns per-criterion pass/fail; `get_promotion_status()` reads the DB record.
-- **OOS split** (`arthaai/backtest/engine.py`) — `oos_slice(n_total, oos_pct=0.30)` and a `data_slice=` parameter on `run_backtest()`.
-- **`arthaai promote <symbol>` CLI** — runs an OOS backtest, applies the gate, saves to TimescaleDB; supports `--signal`, `--adx`, `--warmup`, `--limit`, `--dry-run`, `--save`.
-- **`signal_promotion` schema + DB layer** — table with `(symbol, signal)` PK; `upsert_signal_promotion`, `get_signal_promotion`, `list_qualified_symbols`, plus provider-preference helpers (`set_preferred_provider`, `get_preferred_provider`, `record_ingest_provider`).
-- **13 execution-state tests + 8 promotion tests** — state lifecycle, breaker behaviour, engine integration, OOS gate.
+**Larger, still open**
+6. Portfolio Kelly + VaR/ES (`ARTHA-309/310/311`).
+7. Cross-sectional factor composite wired into sizing (`ARTHA-219`).
+8. OpenTelemetry + Prometheus (`ARTHA-507/508`).
+9. Human approval gate with audit trail.
+10. Real broker adapter — only after E3 passes (Law 3).
 
-### Commits (pushed to `origin/feat/arthaai-core`)
+---
+
+## 15. Commit history
 
 | Commit | Description |
 |--------|-------------|
-| `88c3f22` | Complete architecture status report + CLI, schema, DB-layer refactor |
+| `4e830d0` | docs: rebuild project board from independent code verification |
+| `fa6ac07` | docs: refresh status report summary, commit history, TOC |
+| `88c3f22` | Complete architecture status report + CLI/schema/DB refactor |
 | `08183f9` | Execution state machine, equity-curve breaker, promotion gate |
 | `b822afe` | Green the branch against SPEC.md quality gates (Q1–Q3) |
 | `0b0c539` | Factor zoo and provider workflows |
-| `b0252a6` | 4-tier architecture status report (STATUS_REPORT.md) |
+| `b0252a6` | 4-tier architecture status report |
 | `57abb1d` | Breakout live wiring + eval calibration + OPA fix + AGENTS.md |
 | `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
 | `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
-| `ebadb2a` | Signal-conditioned Kelly sizing + trend/breakout signal layer |
 
-Working tree clean; branch is level with its upstream.
-
-### Test count: 113 DB-independent tests pass in ~18s
-
-| Test file | Tests | What it covers |
-|-----------|-------|---------------|
-| `test_indicators.py` | 15 | SMA, RSI, annualised stats, trend signal, signal Kelly stats, vectorization, breakout |
-| `test_kelly.py` | 8 | Discrete/continuous Kelly, policy cap, no-edge → flat, negative-edge → flat |
-| `test_backtest.py` | 3 | Drawdown, monotonic, serialization |
-| `test_eval.py` | 10 | Golden fixtures, rationale, confidence bands, calibration score |
-| `test_llm.py` | 5 | Verdict parsing, provider chain fallback, chain always ends offline |
-| `test_gateway.py` | 7 | Auth required, cookie auth, httpOnly cookie, dev-token refusal |
-| `test_policy.py` | 3 | OPA allow/deny |
-| `test_execution.py` | 3 | Order sizing, sell stop, drawdown breaker |
-| `test_execution_state.py` | 13 | Position lifecycle (FLAT→OPEN→CLOSED), Portfolio equity-curve breaker, mark-to-market, reentry-skip, ExecutionEngine integration, `record_entry_equity` seeding |
-| `test_promotion.py` | 8 | Strict "All 3" gate (Sharpe ≥ 1.0, DD ≤ 20%, beats B&H), `oos_slice()` OOS split |
-| `test_provider.py` | 25 | Multi-source ingest chain (LSE→yfinance→empty), incremental ingest, OHLCV upsert, malformed payload, stale-while-revalidate, asset meta |
-| `test_lse.py` | 4 | 404 fallback, candle parsing, API key required, friendly meta |
-| **Subtotal** | **113** | — |
-| `test_health` | **1** | TimescaleDB connectivity (excluded: requires Docker) |
-| **Total** | **114** | All tests |
-
-**Run with** `pytest tests/ -q -k "not health"` **to get 113 DB-independent tests in ~18s.**
-
----
-
-## Summary: Where we stand
-
-ArthaAI is a **working end-to-end system** with complete plumbing from web UI → security → data ingestion → multi-agent analysis → Kelly sizing → paper execution. The architecture is sound, the code is tested (113 automated tests, ~18s), and the guardrails are real (not just prompt-engineered).
-
-**Three key facts:**
-
-1. **The plumbing works**: Data flows correctly through all four tiers. Auth is enforced. OPA policy gates every agent tool call. Kelly sizing applies a hard 5% cap that no LLM can override. The equity-curve breaker trips on drawdown. Paper orders record with their stop-loss and rationale. This is a production-grade foundation.
-
-2. **The signal hasn't proven itself yet**: The honest diagnostic is that the current trading signal (trend + breakout, driven by SMA + RSI + ADX) does not beat buy-and-hold on out-of-sample data. This is the correct failure mode — better to know it now than after deploying real money. The backtest gate (Law 3) is working as designed: it blocks live broker integration until the signal proves an edge.
-
-3. **The ★ priority is clear**: The blueprint marks Quant_Agent as "the edge lives here." Today it computes basic statistics; it needs a **multi-factor model** (momentum, mean-reversion, volatility, value, quality factors) combined into a tabular signal with learned weights. That's where the edge will come from — and it can be built and tested on free data before any paid data acquisition.
-
-**Spending sequence (from the architecture doc):**
-- ✅ **Stage 0 (today)**: Free data, free AI tier, self-hosted DBs. Analyze any US ticker on demand. (~$0/month)
-- ○ **Stage 1 (after signal proves edge)**: Cloud hosting for always-on operation. (~$40–100/month)
-- ○ **Stage 2 (after edge scales)**: Live news feeds and sentiment scoring. (~$50–200/month)
-- ○ **Stage 3 (market dominance)**: Bulk market scanning (rank all 12,500 tickers daily). (~$1k–5k/month)
-- ○ **Stage 4 (commodity edge)**: Satellite + cargo intelligence (Kpler, Ursa). ($5k–40k+/month)
-
-**No stage should be funded until the stage before it has proven ROI.** Improving the signal on free data (where iteration is instant) is the correct next step.
-
----
-
-## Implementation by tier (condensed view)
-
-| **Tier** | **Core** | **Status** | **Key gap** |
-|----------|----------|-----------|-------------|
-| **1: Interface** | Gateway auth + dashboard | 87% | Real OAuth 2.1 / JWT; mTLS is infra, not app code |
-| **2: Intelligence** | LangGraph + 4 agents + Master LLM | 68% | Quant factor engine (the ★ star); live news feeds; correlation regime |
-| **3: Oversight** | Kelly sizing + 5% cap + backtest gate | 85% | Portfolio-level Kelly; risk metrics (VaR/ES); dynamic Kelly by regime |
-| **4: Action** | Paper execution + drawdown breaker | 65% | Audit log persistence; live broker (correctly deferred); fill simulation |
-| **Cross-cutting** | OPA policy, circuit breakers, structlog, tests | ✅ | OpenTelemetry (tracing/metrics/alerts deferred) |
-
----
-
-## Next sprint (priority order)
-
-1. **Quant Agent: Multi-factor model** (2–3 weeks)
-   - Add factors: momentum (ROC, MACD), mean-reversion (RSI, Bollinger Bands), volatility (ATR, VIX), value (P/E, P/B), quality (Sharpe, Sortino)
-   - Combine into a tabular factor model with learned weights
-   - Backtest and verify edge beats B&H on OOS data
-   - This is where the real edge lives; all other work is support
-
-2. **Correlation Regime Agent** (1 week)
-   - Rolling correlation matrix across assets
-   - Hierarchical clustering to detect risk-off fusion
-   - Pass regime to Master LLM for context; pass to Asset Manager for dynamic Kelly adjustment
-
-3. **Live news ingestion** (1 week)
-   - Add RSS/API feeds (Reuters, Finnhub, NewsAPI)
-   - Real-time embedding + scoring pipeline
-   - Replace static 8 seed articles with live feed
-
-4. **Incremental ingest for yfinance** (low effort, high impact)
-   - Use `latest_ts()` to fetch only bars after the last known timestamp
-   - Saves 80% of yfinance bandwidth; LSE provider already has this
-
-5. **Provider failover (LSE → yfinance → empty)**
-   - Auto-select: try LSE first, fall back to yfinance on 404
-   - Single `ingest` command; today they're separate
-
-6. **Audit log persistence** (1–2 days)
-   - structlog output to TimescaleDB; persist all orders, trades, breaker trips
-   - Enable compliance audit and bias analysis
-
-7. **Human decision gate workflow** (1 week)
-   - `arthaai execute --require-approval` mode
-   - Generate order draft, display to user, require explicit approval flag before submitting
-   - Multi-signature threshold for positions > 3%
-
-8. **OpenTelemetry tracing** (1–2 weeks)
-   - Add trace per agent, span per LLM call / DB query / Qdrant search
-   - Export to Jaeger/Tempo; enable latency profiling
-   - Prometheus metrics: request latency, agent durations, LLM token usage, breaker trips
+> **Uncommitted:** the entire Phase 0–3 + A–D body of work (21 modified, 15 new files)
+> plus this report revision. Nothing above is pushed beyond `4e830d0`.
 
 ---
 

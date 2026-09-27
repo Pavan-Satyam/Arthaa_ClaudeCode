@@ -19,7 +19,7 @@ from dataclasses import asdict
 from langgraph.graph import END, START, StateGraph
 
 from arthaai.agents import alt_agent, asset_manager, db_agent, master_llm, news_agent, quant_agent
-from arthaai.data import ingest as ingest_mod
+from arthaai.data.provider import ingest_resilient
 from arthaai.orchestration.state import GraphState
 
 
@@ -27,7 +27,7 @@ from arthaai.orchestration.state import GraphState
 def _ingest(state: GraphState) -> dict:
     if state.get("skip_ingest"):
         return {}
-    ingest_mod.ingest(state["symbol"])
+    ingest_resilient(state["symbol"])
     return {}
 
 

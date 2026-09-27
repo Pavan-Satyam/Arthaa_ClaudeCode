@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from slowapi import Limiter
@@ -17,13 +18,23 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from arthaai import __version__
-from arthaai.gateway.auth import Principal, require_principal
+from arthaai.config import get_settings
+from arthaai.gateway.auth import Principal, client_key, require_principal
 
 _DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="ArthaAI Gateway", version=__version__, description="Tier 1 secure ingress.")
 app.state.limiter = limiter
+
+# CORS (ARTHA-509): same-origin by default; explicit origins via ARTHAAI_CORS_ORIGINS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -69,8 +80,10 @@ def dashboard(response: Response) -> str:
 
 
 @app.get("/ohlcv/{symbol}")
+@limiter.limit("60/minute", key_func=client_key)
 def ohlcv(
     symbol: str,
+    request: Request,
     limit: int = 120,
     principal: Principal = Depends(require_principal),
 ) -> dict:
@@ -80,13 +93,13 @@ def ohlcv(
     is sent automatically by the browser, so the chart loads without the user
     handling a credential.
     """
-    from arthaai.data import ingest as ingest_mod
+    from arthaai.data.provider import ingest_resilient
     from arthaai.db import timescale
 
     symbol = symbol.strip().strip(".").upper()
     df = timescale.load_ohlcv(symbol, limit=limit)
     if df.empty:
-        ingest_mod.ingest(symbol)
+        ingest_resilient(symbol)
         df = timescale.load_ohlcv(symbol, limit=limit)
     bars = [
         {"ts": str(r.ts), "open": r.open, "high": r.high, "low": r.low, "close": r.close}
@@ -110,7 +123,7 @@ def health() -> dict:
 
 
 @app.post("/analyze/{symbol}", response_model=AnalyzeResponse)
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=client_key)
 def analyze(
     symbol: str,
     request: Request,

@@ -208,3 +208,58 @@ class TestExecutionEngine:
         e.step(_bar("2025-01-02", 100, 102, 90, 95))
         assert e.portfolio.positions["GLD"].state == PositionState.CLOSED
         assert e.portfolio.positions["GLD"].realised_pnl < 0
+
+
+class TestKillSwitch:
+    def test_flattens_all_open_positions(self):
+        p = Portfolio(initial_equity=100_000.0)
+        p.positions["GLD"] = Position(symbol="GLD")
+        p.positions["GLD"].open(_entry_fill("2025-01-01", price=100.0, qty=100.0, sym="GLD"), stop_price=90.0)
+        p.positions["SLV"] = Position(symbol="SLV")
+        p.positions["SLV"].open(_entry_fill("2025-01-01", price=50.0, qty=200.0, sym="SLV"), stop_price=45.0)
+        p._last_session_ts = pd.Timestamp("2025-01-02")
+
+        fills = p.kill_switch({"GLD": 95.0, "SLV": 48.0})
+        assert set(fills) == {"GLD", "SLV"}
+        assert p.positions["GLD"].state == PositionState.CLOSED
+        assert p.positions["SLV"].state == PositionState.CLOSED
+        assert p.positions["GLD"].realised_pnl == (95.0 - 100.0) * 100.0
+        assert p.state == PortfolioState.SYSTEM_LOCKED
+
+    def test_requires_manual_unlock(self):
+        p = Portfolio()
+        p.positions["GLD"] = Position(symbol="GLD")
+        p.positions["GLD"].open(_entry_fill("2025-01-01", price=100.0, qty=10.0, sym="GLD"), stop_price=90.0)
+        p.kill_switch({"GLD": 95.0})
+        assert p.state == PortfolioState.SYSTEM_LOCKED
+        p.unlock()
+        assert p.state == PortfolioState.ACTIVE
+
+    def test_ignores_non_open_positions(self):
+        p = Portfolio()
+        p.positions["GLD"] = Position(symbol="GLD")  # FLAT
+        fills = p.kill_switch({"GLD": 100.0})
+        assert fills == {}
+        assert p.state == PortfolioState.SYSTEM_LOCKED
+
+
+class TestDayReset:
+    def test_reset_day_clears_tripped_breaker_but_keeps_trip_count(self):
+        p = Portfolio()
+        p.state = PortfolioState.DRAWDOWN_BREAKER
+        p._consecutive_trips = 1
+        p.reset_day()
+        assert p.state == PortfolioState.ACTIVE
+        assert p._consecutive_trips == 1  # escalation counter is preserved
+
+    def test_reset_day_leaves_system_locked(self):
+        p = Portfolio()
+        p.state = PortfolioState.SYSTEM_LOCKED
+        p.reset_day()
+        assert p.state == PortfolioState.SYSTEM_LOCKED
+
+    def test_is_new_session_detects_calendar_day_boundary(self):
+        p = Portfolio()
+        p._last_session_ts = pd.Timestamp("2025-01-01")
+        assert p._is_new_session(pd.Timestamp("2025-01-02")) is True
+        assert p._is_new_session(pd.Timestamp("2025-01-01 15:30")) is False

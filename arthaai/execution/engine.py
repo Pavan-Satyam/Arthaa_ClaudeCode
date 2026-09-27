@@ -12,14 +12,19 @@ the same guardrails.
 Composes arthaai.execution.state for the per-symbol Position state machine and
 the portfolio-level equity-curve breaker, so backtest and live execution walk
 identical state transitions.
+
+Pass an ``audit`` (path or AuditLog) to persist orders, fills and breaker events
+as JSONL so the trail survives a process restart.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
+from arthaai.execution.audit import AuditLog
 from arthaai.execution.state import (
     Fill,
     Portfolio,
@@ -52,6 +57,7 @@ class ExecutionEngine:
         drawdown_trigger: float = 0.10,
         drawdown_lookback: int = 5,
         stop_loss_pct: float = 0.08,
+        audit: AuditLog | str | Path | None = None,
     ) -> None:
         if equity is not None:
             initial_equity = equity
@@ -64,6 +70,13 @@ class ExecutionEngine:
         self.portfolio._peak_equity = initial_equity
         self.stop_loss_pct = stop_loss_pct
         self.orders: list[Order] = []
+        if isinstance(audit, (str, Path)):
+            audit = AuditLog(audit)
+        self.audit: AuditLog | None = audit
+
+    def _audit(self, event: str, **fields) -> None:
+        if self.audit is not None:
+            self.audit.write(event, **fields)
 
     @property
     def breaker_state(self) -> str:
@@ -79,6 +92,7 @@ class ExecutionEngine:
         )
 
     def mark_equity(self, equity: float) -> None:
+        before = self.portfolio.state
         open_positions = {
             s: p for s, p in self.portfolio.positions.items() if p.state == PositionState.OPEN
         }
@@ -92,9 +106,35 @@ class ExecutionEngine:
             drawdown = (local_peak - equity) / local_peak
             if drawdown >= self.portfolio.drawdown_trigger:
                 self.portfolio._trip_breaker()
+        if self.portfolio.state != before:
+            self._audit("breaker", state=self.portfolio.state.value, equity=equity)
 
     def step(self, bar) -> dict:
-        return self.portfolio.step(bar)
+        """Advance one bar: mark positions, fire stops/targets, update breaker."""
+        before = self.portfolio.state
+        levels = {
+            sym: (pos.stop_price, pos.target_price)
+            for sym, pos in self.portfolio.positions.items()
+            if pos.state == PositionState.OPEN
+        }
+        fills = self.portfolio.step(bar)
+        for sym, fill in fills.items():
+            if fill is None:
+                continue
+            stop, target = levels.get(sym, (None, None))
+            if stop is not None and fill.price == stop:
+                reason = "stop_loss"
+            elif target is not None and fill.price == target:
+                reason = "target"
+            else:
+                reason = "exit"
+            self._audit(
+                "fill", symbol=sym, side=fill.side, quantity=fill.quantity,
+                price=fill.price, reason=reason, ts=fill.ts,
+            )
+        if self.portfolio.state != before:
+            self._audit("breaker", state=self.portfolio.state.value)
+        return fills
 
     def submit(
         self,
@@ -135,9 +175,57 @@ class ExecutionEngine:
             self.portfolio.deposit(fill.notional())
         order = Order(symbol=symbol.upper(), side=side, notional=notional, stop_loss=stop)
         self.orders.append(order)
+        self._audit(
+            "order", symbol=order.symbol, side=order.side, notional=order.notional,
+            stop_loss=order.stop_loss, paper=order.paper, ts=fill_ts,
+        )
         return order
 
     def close(self, symbol: str, fill: Fill) -> None:
         pos = self.portfolio.positions.get(symbol)
         if pos is not None and pos.state == PositionState.OPEN:
             pos.close(fill)
+
+    def exit_position(
+        self,
+        symbol: str,
+        price: float,
+        ts: pd.Timestamp | None = None,
+        reason: str = "exit",
+    ) -> Fill | None:
+        """Close an open position at ``price`` (signal exit), crediting proceeds."""
+        pos = self.portfolio.positions.get(symbol)
+        if pos is None or pos.state != PositionState.OPEN:
+            return None
+        fill = Fill(
+            ts=ts if ts is not None else pd.Timestamp.now(tz="UTC"),
+            symbol=symbol,
+            side="sell",
+            quantity=pos.quantity,
+            price=price,
+        )
+        pos.close(fill)
+        self.portfolio.add_proceeds(fill.notional())
+        self._audit(
+            "fill", symbol=symbol, side="sell", quantity=fill.quantity,
+            price=fill.price, reason=reason, ts=fill.ts,
+        )
+        return fill
+
+    def kill_switch(self, prices: dict[str, float] | None = None) -> dict:
+        """Flatten all open positions and lock the portfolio (manual unlock)."""
+        fills = self.portfolio.kill_switch(prices)
+        self._audit("kill_switch", closed=sorted(fills), state=self.portfolio.state.value)
+        return fills
+
+    def reset_day(self) -> None:
+        """Clear an active (unlocked) drawdown breaker at a session boundary."""
+        before = self.portfolio.state
+        self.portfolio.reset_day()
+        if self.portfolio.state != before:
+            self._audit("reset_day", state=self.portfolio.state.value)
+
+    def unlock(self) -> None:
+        """Manual unlock from DRAWDOWN_BREAKER / SYSTEM_LOCKED."""
+        self.portfolio.unlock()
+        self._audit("unlock", state=self.portfolio.state.value)

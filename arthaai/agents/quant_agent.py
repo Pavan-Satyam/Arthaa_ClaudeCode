@@ -65,9 +65,14 @@ def run(symbol: str, factor_zoos: list[str] | None = None, top_k: int = 0) -> di
         factor_scores = _evaluate_factors(symbol, df, factor_zoos, top_k or DEFAULT_TOP_K)
         if factor_scores:
             result["factors"] = factor_scores
-            # Aggregate factor direction: bullish if mean > 0, bearish if < 0
-            factor_signal = sum(f["score"] for f in factor_scores) / len(factor_scores)
-            result["factor_signal"] = round(factor_signal, 4)
+        # Sizing signal: same fixed factor set and aggregation as
+        # factor_signal_series(), so the live pipeline and the walk-forward
+        # backtest compute the identical gate input (no live/back divergence).
+        series = factor_signal_series(symbol, df)
+        if series is not None and len(series):
+            last = series.iloc[-1]
+            if last == last:  # not NaN
+                result["factor_signal"] = round(float(last), 4)
     except Exception:
         pass  # Factor engine is non-blocking — degrade gracefully if unavailable
 
@@ -123,6 +128,57 @@ def _evaluate_factors(
     # Sort by absolute score descending, return top-K
     scores.sort(key=lambda x: abs(x["score"]), reverse=True)
     return scores[:top_k]
+
+
+# Fixed a-priori factor subset for the per-bar signal used by sizing/backtest.
+# Chosen as a small Alpha101 cross-section; NOT re-ranked per bar (that would be
+# look-ahead), so the series is valid inside a walk-forward backtest.
+DEFAULT_FACTOR_IDS = [
+    "alpha101_024",
+    "alpha101_009",
+    "alpha101_012",
+    "alpha101_023",
+    "alpha101_031",
+]
+
+
+def factor_signal_series(
+    symbol: str,
+    df: "pd.DataFrame",
+    factor_ids: list[str] | None = None,
+) -> "pd.Series | None":
+    """Per-bar aggregate factor signal: row-wise mean of the selected factors.
+
+    The registry computes each factor's full series (not just the last bar), so
+    this yields a causal signal for every bar — the value at t uses bars <= t.
+    The factor set is fixed a priori (``DEFAULT_FACTOR_IDS``) rather than
+    re-ranked per bar, so the series is safe to use in a walk-forward backtest.
+
+    Returns None when no factor could be computed. Aggregation matches the live
+    ``run()`` (unweighted mean of raw factor values).
+    """
+    from arthaai.factors.panel import build_panel
+    from arthaai.factors.registry import get_default_registry
+
+    ids = factor_ids or DEFAULT_FACTOR_IDS
+    panel = build_panel({symbol: df})
+    if not panel or "close" not in panel:
+        return None
+
+    reg = get_default_registry()
+    columns = []
+    for fid in ids:
+        try:
+            factor_df = reg.compute(fid, panel)
+        except Exception:
+            continue
+        if factor_df is None or factor_df.empty or factor_df.shape[1] == 0:
+            continue
+        columns.append(factor_df.iloc[:, 0].rename(fid))
+    if not columns:
+        return None
+    combined = pd.concat(columns, axis=1)
+    return combined.mean(axis=1, skipna=True).reset_index(drop=True)
 
 
 # Type hint for pd (imported lazily to avoid circular imports)

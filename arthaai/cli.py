@@ -42,6 +42,28 @@ def health() -> None:
     raise typer.Exit(0 if ok else 1)
 
 
+@app.command()
+def migrate() -> None:
+    """Apply the idempotent TimescaleDB schema (creates missing tables/columns).
+
+    Needed for databases whose Docker volume predates a schema change — the
+    container's init hook only runs on a fresh volume. Safe to run repeatedly.
+    """
+    from arthaai.db import migrate as migrate_mod
+    from arthaai.db import timescale
+
+    try:
+        n = migrate_mod.apply_schema()
+        deleted = timescale.repair_daily_duplicates()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Migration failed:[/] {exc}")
+        console.print("[dim]Is the stack up? `docker compose up -d`[/]")
+        raise typer.Exit(1)
+    console.print(f"applied [bold]{n}[/] idempotent schema statements.")
+    if deleted:
+        console.print(f"repaired [bold]{deleted}[/] duplicate daily bar(s) (legacy dual-provider ingest).")
+
+
 @app.command("seed-news")
 def seed_news() -> None:
     """Load illustrative, source-attributed news into Qdrant."""
@@ -124,6 +146,48 @@ def ingest_lse(
         console.print(f"ingested [bold]{result.rows}[/] bars for [bold]{symbol.upper()}[/] ([cyan]lse[/]).")
 
 
+@app.command("provider-status")
+def provider_status(
+    symbol: str,
+    prefer: str = typer.Option("", help="Pin this symbol's provider: lse | yfinance | auto (clear)."),
+) -> None:
+    """Show (or set) the stored data provider for SYMBOL."""
+    from arthaai.db import timescale
+
+    symbol = symbol.upper()
+
+    if prefer:
+        if prefer not in ("lse", "yfinance", "auto"):
+            console.print("[red]--prefer must be: lse | yfinance | auto[/]")
+            raise typer.Exit(1)
+        try:
+            timescale.set_preferred_provider(symbol, "" if prefer == "auto" else prefer)
+        except Exception as exc:  # noqa: BLE001
+            console.print(
+                f"[red]Could not update preference:[/] {exc}\n[dim]Run `arthaai migrate` first.[/]"
+            )
+            raise typer.Exit(1)
+        console.print(f"preferred provider for [bold]{symbol}[/] set to [cyan]{prefer}[/].")
+        return
+
+    try:
+        status = timescale.get_provider_status(symbol)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]DB unreachable:[/] {exc}\n[dim]`docker compose up -d` then `arthaai migrate`.[/]")
+        raise typer.Exit(1)
+
+    if not status:
+        console.print(f"[yellow]{symbol} is not in the asset catalog.[/]")
+        raise typer.Exit(1)
+
+    t = Table(title=f"Provider status · {symbol}", show_header=False)
+    t.add_column("k"); t.add_column("v")
+    t.add_row("preferred", status["preferred_provider"] or "[dim]auto (none pinned)[/]")
+    t.add_row("last used", status["last_provider"] or "[dim]—[/]")
+    t.add_row("last ingest", str(status["last_ingest_at"] or "—"))
+    console.print(t)
+
+
 @app.command()
 def analyze(symbol: str, skip_ingest: bool = typer.Option(False, help="Use existing OHLCV.")) -> None:
     """Run the full multi-agent analysis pipeline for SYMBOL."""
@@ -182,6 +246,7 @@ def execute(
     symbol: str,
     equity: float = typer.Option(100_000, help="Paper account equity."),
     skip_ingest: bool = typer.Option(False),
+    audit: str = typer.Option("", help="Append the paper order to this JSONL audit log."),
 ) -> None:
     """Run the pipeline, then place a PAPER order through Tier 4 guardrails."""
     from arthaai.execution import ExecutionEngine, TradingHalted
@@ -198,7 +263,7 @@ def execute(
         console.print(f"[yellow]No paper order — verdict {direction}, allocation 0.[/]")
         raise typer.Exit(0)
 
-    engine = ExecutionEngine(equity=equity)
+    engine = ExecutionEngine(equity=equity, audit=audit or None)
     try:
         order = engine.submit(symbol, alloc, last_price, direction)
     except TradingHalted as exc:
@@ -212,7 +277,55 @@ def execute(
         f"[bold]PAPER[/]",
         title="Tier 4 · paper execution", border_style="magenta",
     ))
+    if audit:
+        console.print(f"[dim]audit log appended to {audit}[/]")
     console.print("[dim]Simulated order only — no broker contacted.[/]")
+
+
+@app.command("paper-sim")
+def paper_sim(
+    symbol: str,
+    warmup: int = 60,
+    limit: int = 500,
+    signal: str = typer.Option("trend", help="trend | breakout"),
+    adx: float = typer.Option(0.0, help="ADX gate for breakout (e.g. 25)."),
+    equity: float = typer.Option(100_000, help="Starting paper equity."),
+    fraction: float = typer.Option(0.05, help="Allocation fraction per entry (policy cap)."),
+    stop_loss: float = typer.Option(0.08, help="Mandatory stop-loss fraction."),
+    audit: str = typer.Option("", help="Append execution events to this JSONL audit log."),
+) -> None:
+    """Bar-by-bar paper simulation that actually fires stop-loss/targets (Tier 4)."""
+    from arthaai.db import timescale
+    from arthaai.execution import ExecutionEngine
+    from arthaai.execution.simulate import simulate_symbol
+
+    symbol = symbol.upper()
+    df = timescale.load_ohlcv(symbol, limit=limit)
+    if len(df) < warmup + 5:
+        console.print(f"[red]Not enough data for {symbol}: {len(df)} bars (need > {warmup + 5}).[/]")
+        raise typer.Exit(1)
+
+    engine = ExecutionEngine(initial_equity=equity, stop_loss_pct=stop_loss, audit=audit or None)
+    with console.status(f"[bold]simulating {symbol} ({signal}) bar-by-bar…"):
+        res = simulate_symbol(
+            symbol, df, warmup=warmup, signal=signal, adx_threshold=adx,
+            allocation_fraction=fraction, equity=equity, stop_loss_pct=stop_loss, engine=engine,
+        )
+
+    t = Table(title=f"Paper simulation · {symbol} · {signal}", show_header=False)
+    t.add_column("k"); t.add_column("v", justify="right")
+    t.add_row("bars", str(res.bars))
+    t.add_row("entries", str(res.entries))
+    t.add_row("stop-loss hits", str(res.stops_hit))
+    t.add_row("target hits", str(res.targets_hit))
+    t.add_row("other exits", str(res.exits))
+    t.add_row("realised P&L", f"${res.realised_pnl:,.2f}")
+    t.add_row("final equity", f"${res.final_equity:,.2f}")
+    t.add_row("max drawdown", f"{res.max_drawdown:.2%}")
+    console.print(t)
+    if audit:
+        console.print(f"[dim]audit log appended to {audit}[/]")
+    console.print("[dim]Simulated orders only — no broker contacted.[/]")
 
 
 @app.command()
@@ -222,67 +335,90 @@ def promote(
     warmup: int = 60,
     limit: int = 500,
     adx: float = typer.Option(0.0, help="ADX gate for breakout (e.g. 25)."),
+    cost_bps: float = typer.Option(0.0, help="Round-trip friction (bps) charged on turnover."),
+    vol_target: float = typer.Option(0.0, help="Annualised volatility target (0 = off)."),
+    windows: int = typer.Option(2, help="Non-overlapping OOS windows; ALL must pass."),
     dry_run: bool = typer.Option(False, help="Show results without saving to DB."),
     save: bool = typer.Option(True, help="Save promotion result to DB."),
 ) -> None:
-    """Run an OOS promotion evaluation for SYMBOL.
+    """Run an OOS promotion evaluation for SYMBOL across independent windows.
 
-    Evaluates the signal on the last 30% of bars (OOS). Promotion requires ALL THREE:
+    Promotion requires EVERY window to pass ALL criteria:
     1. Sharpe (annualised) >= 1.0
     2. Max drawdown <= 20%
-    3. Strategy return > buy-and-hold return
+    3. Beats buy-and-hold, exposure-matched (100% long/flat return > B&H)
 
-    Results are saved to TimescaleDB and shown in the table.
+    The B&H test is exposure-matched: comparing the Kelly-sized return (~1-5%
+    exposure) to a 100%-invested benchmark is unwinnable by construction.
     """
-    from arthaai.backtest import oos_slice, run_backtest
-    from arthaai.backtest.promotion import MAX_DD, MIN_SHARPE, evaluate_promotion
+    from arthaai.backtest import oos_windows, run_backtest
+    from arthaai.backtest.promotion import (
+        MAX_DD,
+        MIN_SHARPE,
+        combine_windows,
+        evaluate_promotion,
+    )
     from arthaai.db import timescale
 
     symbol = symbol.upper()
     adx_threshold = adx if signal == "breakout" else 0.0
-
-    console.print(f"[bold]Running promotion evaluation for {symbol} ({signal})…[/]")
-    console.print("[dim]OOS slice = last 30% of bars[/]")
 
     df = timescale.load_ohlcv(symbol, limit=limit)
     if len(df) < warmup + 10:
         console.print(f"[red]Not enough data: {len(df)} bars (need > {warmup + 10}).[/]")
         raise typer.Exit(1)
 
-    in_end, n_total = oos_slice(len(df), oos_pct=0.30)
-    is_bars = n_total - in_end
-    console.print(f"[dim]IS: bars 0–{in_end} ({is_bars} bars) · OOS: bars {in_end}–{n_total} ({n_total - in_end} bars)[/]")
+    wins = oos_windows(len(df), oos_pct=0.30, count=windows, min_bars=warmup + 10)
+    if not wins:
+        console.print("[red]Not enough bars for the requested OOS windows.[/]")
+        raise typer.Exit(1)
 
-    oos_slice_range = slice(in_end, n_total)
-    with console.status(f"[bold]Running OOS backtest (bars {in_end}–{n_total})…"):
-        oos = run_backtest(
-            symbol, warmup=warmup, limit=limit, signal=signal,
-            adx_threshold=adx_threshold, data_slice=oos_slice_range,
+    console.print(f"[bold]Promotion · {symbol} · {signal} · {len(wins)} OOS window(s)[/]")
+    rows = []
+    evals = []
+    for lo, hi in wins:
+        with console.status(f"[bold]OOS backtest bars {lo}–{hi}…"):
+            res = run_backtest(
+                symbol, warmup=warmup, limit=limit, signal=signal,
+                adx_threshold=adx_threshold, data_slice=slice(lo, hi),
+                cost_bps=cost_bps, vol_target=vol_target,
+            )
+        ev = evaluate_promotion(
+            oos_sharpe=res.sharpe,
+            oos_max_drawdown=res.max_drawdown,
+            oos_total_return=res.total_return,
+            buy_hold_return=res.buy_hold_return,
+            oos_long_only_return=res.long_only_return,
         )
+        rows.append((lo, hi, res, ev))
+        evals.append(ev)
 
-    ev = evaluate_promotion(
-        oos_sharpe=oos.sharpe,
-        oos_max_drawdown=oos.max_drawdown,
-        oos_total_return=oos.total_return,
-        buy_hold_return=oos.buy_hold_return,
-    )
+    qualified, note = combine_windows(evals)
 
     t = Table(title=f"Promotion · {symbol} · {signal}", show_header=True, header_style="bold")
-    t.add_column("Criterion", width=20); t.add_column("Threshold", justify="right")
-    t.add_column("Actual", justify="right"); t.add_column("Pass?", justify="center")
-    t.add_row("Sharpe (ann.)", f"≥ {MIN_SHARPE:.1f}", f"{oos.sharpe:.2f}", "✅" if ev.sharpe_ok else "❌")
-    t.add_row("Max drawdown", f"≤ {MAX_DD:.0%}", f"{oos.max_drawdown:.2%}", "✅" if ev.dd_ok else "❌")
-    t.add_row("Beats B&H", f"> {oos.buy_hold_return:+.2%}", f"{oos.total_return:+.2%}", "✅" if ev.bh_ok else "❌")
+    t.add_column("Window", justify="right"); t.add_column("Sharpe", justify="right")
+    t.add_column("MaxDD", justify="right"); t.add_column("Long-only", justify="right")
+    t.add_column("B&H", justify="right"); t.add_column("Pass", justify="center")
+    for lo, hi, res, ev in rows:
+        t.add_row(
+            f"{lo}–{hi}", f"{res.sharpe:.2f}", f"{res.max_drawdown:.1%}",
+            f"{res.long_only_return:+.2%}", f"{res.buy_hold_return:+.2%}",
+            "✅" if ev.qualified else "❌",
+        )
     console.print(t)
 
-    border = "green" if ev.qualified else "red"
-    verdict_str = "[bold green]QUALIFIED[/] — promoted" if ev.qualified else "[bold red]REJECTED[/]"
+    lo, hi, res, ev = rows[-1]  # most recent window (persisted metrics)
+    border = "green" if qualified else "red"
+    verdict_str = "[bold green]QUALIFIED[/] — promoted" if qualified else "[bold red]REJECTED[/]"
+    failures = "; ".join(f"window {l}–{h}: {e.reason}" for l, h, _, e in rows if not e.qualified)
     console.print(Panel(
-        f"{verdict_str}\n"
-        f"OOS return: {oos.total_return:+.2%}  B&H: {oos.buy_hold_return:+.2%}  "
-        f"Sharpe: {oos.sharpe:.2f}  MaxDD: {oos.max_drawdown:.2%}\n"
-        f"Trades: {oos.trades}  Hit rate: {oos.hit_rate:.0%}\n\n"
-        f"[dim]Failures: {ev.reason if not ev.qualified else 'none'}[/]",
+        f"{verdict_str}  ({note})\n"
+        f"thresholds: Sharpe ≥ {MIN_SHARPE:.1f} · MaxDD ≤ {MAX_DD:.0%} · long-only > B&H\n"
+        f"most recent window {lo}–{hi}: long-only {res.long_only_return:+.2%} vs "
+        f"B&H {res.buy_hold_return:+.2%} · Sharpe {res.sharpe:.2f} · "
+        f"MaxDD {res.max_drawdown:.1%} · trades {res.trades} · hit {res.hit_rate:.0%}\n"
+        f"costs: {cost_bps:g} bps · vol target: {vol_target or 'off'}\n\n"
+        f"[dim]{failures or 'all windows passed'}[/]",
         title="Promotion result", border_style=border,
     ))
 
@@ -291,15 +427,22 @@ def promote(
             timescale.upsert_signal_promotion(
                 symbol=symbol,
                 signal=signal,
-                qualified=ev.qualified,
-                sharpe=oos.sharpe,
-                max_drawdown=oos.max_drawdown,
-                oos_return=oos.total_return,
-                buy_hold_return=oos.buy_hold_return,
+                qualified=qualified,
+                sharpe=res.sharpe,
+                max_drawdown=res.max_drawdown,
+                oos_return=res.total_return,
+                buy_hold_return=res.buy_hold_return,
             )
-            console.print(f"[dim]Saved promotion record to DB (symbol={symbol}, signal={signal}).[/]")
+            console.print(
+                f"[dim]Saved promotion record to DB (symbol={symbol}, signal={signal}, "
+                f"qualified={qualified}).[/]"
+            )
         except Exception as exc:  # noqa: BLE001
-            console.print(f"[yellow]Could not save to DB: {exc}  (run `docker compose up -d` to enable persistence)[/]")
+            console.print(
+                f"[yellow]Could not save to DB: {exc}[/]\n"
+                "[dim]Run `arthaai migrate` to apply the schema "
+                "(and `docker compose up -d` if the stack is down).[/]"
+            )
 
 
 @app.command()
@@ -309,12 +452,17 @@ def backtest(
     limit: int = 500,
     signal: str = typer.Option("trend", help="trend (SMA-cross) | breakout (Donchian 55/20)"),
     adx: float = typer.Option(0.0, help="ADX regime gate for breakout (e.g. 25 = only enter when trending)"),
+    cost_bps: float = typer.Option(0.0, help="Round-trip friction (bps) charged on turnover."),
+    vol_target: float = typer.Option(0.0, help="Annualised volatility target for sizing (0 = off)."),
 ) -> None:
     """Walk-forward backtest with look-ahead guards (offline evaluation)."""
     from arthaai.backtest import run_backtest
 
     with console.status(f"[bold]backtesting {symbol.upper()}…"):
-        res = run_backtest(symbol, warmup=warmup, limit=limit, signal=signal, adx_threshold=adx)
+        res = run_backtest(
+            symbol, warmup=warmup, limit=limit, signal=signal,
+            adx_threshold=adx, cost_bps=cost_bps, vol_target=vol_target,
+        )
     t = Table(title=f"Backtest · {res.symbol} · {signal}" + (f" · ADX≥{adx:g}" if adx else ""), show_header=False)
     t.add_column("k"); t.add_column("v", justify="right")
     t.add_row("bars / trades", f"{res.bars} / {res.trades}")
@@ -328,6 +476,8 @@ def backtest(
     t.add_row("Sharpe (ann.)", f"{res.sharpe:.2f}")
     t.add_row("max drawdown", f"{res.max_drawdown:.2%}")
     t.add_row("hit rate", f"{res.hit_rate:.1%}")
+    if cost_bps:
+        t.add_row("cost model", f"{cost_bps:g} bps on turnover")
     console.print(t)
     console.print("[dim]Look-ahead-bias guarded: signal at day t only sees bars ≤ t.[/]")
 
@@ -479,8 +629,9 @@ def factors(
     zoo: str = typer.Option("", help="Filter by zoo: alpha101, gtja191, qlib158"),
     top: int = typer.Option(20, help="Top-K results for bench"),
     symbols: str = typer.Option("GLD,SLV,XOM", help="Symbols for bench (comma-separated)"),
+    horizon: int = typer.Option(1, help="Forward-return horizon / IC embargo step for bench"),
 ) -> None:
-    """Alpha Zoo factor engine — list, show, or bench factors."""
+    """Alpha Zoo factor engine — list, show, or IC-bench factors (BH FDR)."""
     from arthaai.factors.registry import get_default_registry
 
     reg = get_default_registry()
@@ -526,8 +677,8 @@ def factors(
         ))
 
     elif action == "bench":
+        from arthaai.factors.eval import evaluate_factors
         from arthaai.factors.panel import build_panel_from_symbols, compute_forward_returns
-        from arthaai.factors.eval import compute_ic_series, compute_ic_stats, categorise
 
         sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
         with console.status(f"[bold]building panel for {sym_list}…"):
@@ -536,42 +687,50 @@ def factors(
             console.print("[red]No data — run `arthaai ingest` first[/]")
             raise typer.Exit(1)
 
-        fwd_ret = compute_forward_returns(panel)
+        fwd_ret = compute_forward_returns(panel, horizon=horizon)
         zoo_filter = zoo or None
         alpha_ids = reg.list(zoo=zoo_filter)
 
-        console.print(f"Evaluating {len(alpha_ids)} factors over {len(sym_list)} assets…")
-        t = Table(title=f"Factor bench · {zoo or 'all zoos'} · top {top} by |IR|")
-        t.add_column("ID"); t.add_column("IC Mean", justify="right"); t.add_column("IR", justify="right")
-        t.add_column("t-stat", justify="right"); t.add_column("Category"); t.add_column("Themes")
-
-        results: list[tuple] = []
-        for aid in alpha_ids:
-            try:
-                factor_df = reg.compute(aid, panel)
-                ic = compute_ic_series(factor_df, fwd_ret)
-                if ic.empty:
+        with console.status(f"[bold]computing {len(alpha_ids)} factors…"):
+            factor_map = {}
+            for aid in alpha_ids:
+                try:
+                    factor_map[aid] = reg.compute(aid, panel)
+                except Exception:
                     continue
-                stats = compute_ic_stats(ic)
-                cat = categorise(stats["ic_mean"], stats["ic_positive_ratio"], stats["ic_std"], stats["ic_count"])
-                meta = reg.get(aid).meta
-                results.append((aid, stats, cat, ", ".join(meta.get("theme", []))))
-            except Exception:
-                continue
 
-        results.sort(key=lambda x: abs(x[1]["ir"]), reverse=True)
-        for aid, stats, cat, themes in results[:top]:
-            color = "green" if cat == "alive" else "red" if cat == "reversed" else "dim"
+        console.print(
+            f"Evaluating {len(factor_map)} factors over {len(sym_list)} assets "
+            f"(horizon={horizon}, BH FDR α=0.05)…"
+        )
+        results = evaluate_factors(factor_map, fwd_ret, alpha=0.05, min_count=20, horizon=horizon)
+
+        t = Table(title=f"Factor bench · {zoo or 'all zoos'} · top {top} by |IC|")
+        t.add_column("ID"); t.add_column("IC Mean", justify="right"); t.add_column("IR", justify="right")
+        t.add_column("t-stat", justify="right"); t.add_column("N", justify="right")
+        t.add_column("Signif", justify="center"); t.add_column("Category"); t.add_column("Themes")
+
+        for r in results[:top]:
+            color = "green" if r.category == "alive" else "red" if r.category == "reversed" else "dim"
+            themes = ", ".join(reg.get(r.alpha_id).meta.get("theme", []))
             t.add_row(
-                aid,
-                f"{stats['ic_mean']:+.4f}",
-                f"{stats['ir']:+.4f}",
-                f"{stats['t_stat']:.2f}",
-                f"[{color}]{cat}[/]",
+                r.alpha_id,
+                f"{r.ic_mean:+.4f}",
+                f"{r.ir:+.4f}",
+                f"{r.t_stat:.2f}",
+                str(r.ic_count),
+                "[green]yes[/]" if r.significant else "[dim]no[/]",
+                f"[{color}]{r.category}[/]",
                 themes,
             )
         console.print(t)
-        console.print(f"\n[dim]{len(results)} factors evaluated · {sum(1 for _,_,c,_ in results if c=='alive')} alive · {sum(1 for _,_,c,_ in results if c=='reversed')} reversed · {sum(1 for _,_,c,_ in results if c=='dead')} dead[/]")
+        n_sig = sum(1 for r in results if r.significant)
+        console.print(
+            f"\n[dim]{len(results)} evaluated · [bold]{n_sig}[/] survive BH FDR · "
+            f"{sum(1 for r in results if r.category == 'alive')} alive · "
+            f"{sum(1 for r in results if r.category == 'reversed')} reversed · "
+            f"{sum(1 for r in results if r.category == 'dead')} dead[/]"
+        )
 
     else:
         console.print("[red]Usage: factors list | show | bench[/]")

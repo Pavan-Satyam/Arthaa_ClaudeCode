@@ -1,0 +1,40 @@
+name: CI
+
+# Quality gates from SPEC.md §4:
+#   Q1 — all source compiles (python -m compileall)
+#   Q2 — test suite green (DB-independent subset; `health` needs Docker)
+# Lint runs a correctness-only ruleset (undefined names, syntax, redefinitions).
+# The generated Alpha-Zoo factor files under arthaai/factors/zoo/ are excluded:
+# many are machine-extracted and currently reference helpers they never import
+# (a known, separately-tracked defect), so linting them here would only add noise.
+
+on:
+  push:
+    branches: [feat/arthaai-core, main]
+  pull_request:
+
+jobs:
+  quality-gates:
+    name: Quality gates (Q1 + Q2)
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install package (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: "Q1 — compile all source"
+        run: python -m compileall arthaai -q
+      - name: "Lint — correctness rules (generated factor zoo excluded)"
+        run: >-
+          python -m ruff check arthaai/ tests/
+          --exclude arthaai/factors/zoo
+          --select F821,F822,F823,F811,F632,E9
+      - name: "Q2 — DB-independent tests"
+        run: python -m pytest tests/ -q -k "not health"

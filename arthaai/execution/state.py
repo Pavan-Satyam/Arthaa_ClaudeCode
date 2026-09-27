@@ -144,11 +144,26 @@ class Portfolio:
             self._equity_curve = [entry_equity]
             self._peak_equity = entry_equity
 
-    def _update_breaker(self, ts: pd.Timestamp, equity: float) -> None:
-        if (self._last_session_ts is not None
-                and ts.normalize() != self._last_session_ts.normalize()
-                and self.state == PortfolioState.DRAWDOWN_BREAKER):
+    def _is_new_session(self, ts: pd.Timestamp) -> bool:
+        """True when ``ts`` is on a different calendar day than the last mark."""
+        return (
+            self._last_session_ts is not None
+            and ts.normalize() != self._last_session_ts.normalize()
+        )
+
+    def reset_day(self) -> None:
+        """Clear an active drawdown breaker at a calendar-day boundary.
+
+        Only a tripped-but-not-locked breaker is cleared. The consecutive-trip
+        counter is deliberately NOT reset: two trips on separate days must still
+        escalate to SYSTEM_LOCKED (which requires an explicit ``unlock()``).
+        """
+        if self.state == PortfolioState.DRAWDOWN_BREAKER:
             self.state = PortfolioState.ACTIVE
+
+    def _update_breaker(self, ts: pd.Timestamp, equity: float) -> None:
+        if self._is_new_session(ts):
+            self.reset_day()
 
         self._last_session_ts = ts
 
@@ -186,6 +201,28 @@ class Portfolio:
 
     def is_buyable(self) -> bool:
         return self.state == PortfolioState.ACTIVE
+
+    def kill_switch(self, prices: dict[str, float] | None = None) -> dict[str, Fill]:
+        """Flatten every open position and require a manual unlock.
+
+        The emergency stop: unlike the drawdown breaker (which only blocks new
+        entries), this closes all open positions at ``prices`` (falling back to
+        each position's entry price) and moves the portfolio to SYSTEM_LOCKED so
+        trading cannot resume without an explicit ``unlock()``.
+        """
+        prices = prices or {}
+        ts = self._last_session_ts or pd.Timestamp.now(tz="UTC")
+        fills: dict[str, Fill] = {}
+        for sym, pos in self.positions.items():
+            if pos.state != PositionState.OPEN:
+                continue
+            price = prices.get(sym) or pos.entry_price
+            fill = Fill(ts=ts, symbol=sym, side="sell", quantity=pos.quantity, price=price)
+            pos.close(fill)
+            self.add_proceeds(fill.notional())
+            fills[sym] = fill
+        self.state = PortfolioState.SYSTEM_LOCKED
+        return fills
 
     def step(self, bar: pd.Series) -> dict[str, Fill | None]:
         fills: dict[str, Fill | None] = {}

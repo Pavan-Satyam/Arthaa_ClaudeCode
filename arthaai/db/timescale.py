@@ -45,12 +45,29 @@ def ensure_asset(symbol: str, name: str | None = None, asset_class: str = "equit
         conn.commit()
 
 
+def _canonical_ts(ts, interval: str):
+    """Canonicalise a bar timestamp.
+
+    Daily bars are keyed to midnight UTC so providers that timestamp the same
+    session differently (LSE at 00:00, yfinance at 13:30) collapse onto ONE row
+    per (symbol, interval, day) via the primary key, instead of silently
+    doubling the series (which corrupts backtests and cross-sectional panels).
+    """
+    ts = pd.Timestamp(ts)
+    if interval == "1d":
+        return (ts.tz_convert("UTC") if ts.tzinfo else ts.tz_localize("UTC")).normalize()
+    return ts
+
+
 def upsert_ohlcv(symbol: str, interval: str, rows: pd.DataFrame) -> int:
     """Insert/update OHLCV bars. `rows` has columns ts, open, high, low, close, volume."""
     if rows.empty:
         return 0
     records = [
-        (symbol, r.ts.to_pydatetime(), interval, r.open, r.high, r.low, r.close, r.volume)
+        (
+            symbol, _canonical_ts(r.ts, interval).to_pydatetime(), interval,
+            r.open, r.high, r.low, r.close, r.volume,
+        )
         for r in rows.itertuples(index=False)
     ]
     sql = """
@@ -66,18 +83,55 @@ def upsert_ohlcv(symbol: str, interval: str, rows: pd.DataFrame) -> int:
         return cur.rowcount
 
 
-def load_ohlcv(symbol: str, interval: str = "1d", limit: int = 400) -> pd.DataFrame:
-    """Return the most recent `limit` bars ascending by time."""
-    sql = """
-        SELECT ts, open, high, low, close, volume
-        FROM ohlcv WHERE symbol = %s AND interval = %s
-        ORDER BY ts DESC LIMIT %s;
+def repair_daily_duplicates() -> int:
+    """Collapse legacy daily duplicates to one row per (symbol, day).
+
+    Older ingests stored both the 00:00 and 13:30 timestamps for the same day.
+    Keeps the latest timestamp per day and deletes the rest; returns rows deleted.
     """
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM ohlcv o USING (
+                SELECT ctid, row_number() OVER (
+                    PARTITION BY symbol, ts::date ORDER BY ts DESC
+                ) AS rn
+                FROM ohlcv WHERE interval = '1d'
+            ) d
+            WHERE o.ctid = d.ctid AND d.rn > 1;
+            """
+        )
+        deleted = cur.rowcount
+        conn.commit()
+    return deleted
+
+
+def load_ohlcv(symbol: str, interval: str = "1d", limit: int = 400) -> pd.DataFrame:
+    """Return the most recent `limit` bars ascending by time.
+
+    Daily series are de-duplicated by calendar day (one bar per day, latest
+    timestamp wins) so legacy double-ingested days cannot distort analytics.
+    """
+    if interval == "1d":
+        sql = """
+            SELECT ts, open, high, low, close, volume FROM (
+                SELECT DISTINCT ON (ts::date) ts, open, high, low, close, volume
+                FROM ohlcv WHERE symbol = %s AND interval = %s
+                ORDER BY ts::date DESC, ts DESC
+                LIMIT %s
+            ) t ORDER BY ts ASC;
+        """
+    else:
+        sql = """
+            SELECT ts, open, high, low, close, volume
+            FROM ohlcv WHERE symbol = %s AND interval = %s
+            ORDER BY ts DESC LIMIT %s;
+        """
     with connection() as conn, conn.cursor() as cur:
         cur.execute(sql, (symbol, interval, limit))
         cols = [c.name for c in cur.description]
         df = pd.DataFrame(cur.fetchall(), columns=cols)
-    return df.iloc[::-1].reset_index(drop=True)
+    return df.iloc[::-1].reset_index(drop=True) if interval != "1d" else df.reset_index(drop=True)
 
 
 def asset_meta(symbol: str) -> dict | None:
@@ -205,3 +259,23 @@ def record_ingest_provider(symbol: str, provider: str, ts: datetime | None = Non
             (provider, ts, symbol),
         )
         conn.commit()
+
+
+def get_provider_status(symbol: str) -> dict | None:
+    """Return the stored provider info for an asset, or None if unknown."""
+    symbol = symbol.upper()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT preferred_provider, last_provider, last_ingest_at "
+            "FROM assets WHERE symbol = %s;",
+            (symbol,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "symbol": symbol,
+        "preferred_provider": row[0],
+        "last_provider": row[1],
+        "last_ingest_at": row[2],
+    }

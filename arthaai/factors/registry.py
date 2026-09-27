@@ -143,6 +143,24 @@ def _zoo_dir_default() -> Path:
     return Path(__file__).parent / "zoo"
 
 
+def _inject_helpers(module: ModuleType) -> None:
+    """Expose ``arthaai.factors.base`` helpers on a zoo module's globals.
+
+    Many machine-extracted zoo files call helpers (``safe_div``, ``ts_std``,
+    ``np``, ...) without importing them, so they raise NameError at compute time
+    and silently contribute nothing (the caller swallows per-factor errors).
+    Rather than patch hundreds of generated files — and re-patch them on every
+    re-extraction — the loader supplies the shared base namespace. Names the
+    module defines itself are never overridden (``setdefault``).
+    """
+    from arthaai.factors import base as _base
+
+    for name in dir(_base):
+        if name.startswith("__"):
+            continue
+        module.__dict__.setdefault(name, getattr(_base, name))
+
+
 class Registry:
     """In-memory registry of all discoverable alphas across zoo subdirectories."""
 
@@ -256,10 +274,13 @@ class Registry:
 
     def _load_module(self, alpha: Alpha) -> ModuleType:
         if not self._use_filesystem_loader:
-            return importlib.import_module(alpha.module_path)
+            module = importlib.import_module(alpha.module_path)
+            _inject_helpers(module)
+            return module
         py_file = self._py_paths[alpha.id]
         cached = sys.modules.get(alpha.module_path)
         if cached is not None and getattr(cached, "__file__", None) == str(py_file):
+            _inject_helpers(cached)
             return cached
         spec = importlib.util.spec_from_file_location(alpha.module_path, py_file)
         if spec is None or spec.loader is None:
@@ -271,6 +292,7 @@ class Registry:
         except Exception:
             sys.modules.pop(alpha.module_path, None)
             raise
+        _inject_helpers(module)
         return module
 
     @staticmethod

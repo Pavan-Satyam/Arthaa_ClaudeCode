@@ -19,4 +19,3 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     h = panel['high']
     lo = panel['low']
     return (ts_argmax(h, 60) - ts_argmin(lo, 60)) / float(60)
-klen.py, kmid.py, kup.py, klow.py, kmid2.py, ksft.py, klow2.py, kup2.py, ksft2.py (K线形态)

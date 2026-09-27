@@ -41,6 +41,32 @@ def oos_slice(n_total: int, oos_pct: float = 0.30) -> tuple[int, int]:
     return in_end, n_total
 
 
+def oos_windows(
+    n_total: int, oos_pct: float = 0.30, count: int = 2, min_bars: int = 1
+) -> list[tuple[int, int]]:
+    """Return up to ``count`` non-overlapping OOS windows, most recent first.
+
+    Each window spans ``round(n_total * oos_pct)`` bars (at least ``min_bars``);
+    windows walk backwards from the end, so index 0 is the most recent slice.
+    Requiring a signal to pass *every* window is a cheap guard against
+    cherry-picking the one window that happened to work.
+    """
+    if n_total <= 0 or count <= 0:
+        return []
+    size = max(min_bars, int(round(n_total * oos_pct)))
+    windows: list[tuple[int, int]] = []
+    end = n_total
+    for _ in range(count):
+        start = end - size
+        if start < 0:
+            break
+        windows.append((start, end))
+        end = start
+        if end <= 0:
+            break
+    return windows
+
+
 @dataclass
 class BacktestResult:
     symbol: str
@@ -76,6 +102,9 @@ def run_backtest(
     symbol: str, *, warmup: int = 60, limit: int = 500,
     signal: str = "trend", adx_threshold: float = 0.0,
     data_slice: slice | None = None,
+    cost_bps: float = 0.0,
+    factor_gate: bool | None = None,
+    vol_target: float | None = None,
 ) -> BacktestResult:
     """Walk-forward backtest with look-ahead-bias guards.
 
@@ -86,6 +115,13 @@ def run_backtest(
         signal: 'trend' or 'breakout'.
         adx_threshold: ADX regime threshold for breakout signal.
         data_slice: optional slice into the loaded OHLCV (e.g. for OOS runs).
+        cost_bps: round-trip friction in basis points charged on position
+            turnover (|Δexposure|). Default 0 = frictionless.
+        factor_gate: apply the Alpha-Zoo factor gate (E2) to sizing. None uses
+            ``Settings.factor_gate``. Computes a per-bar factor signal so the
+            backtest sizes exactly as the live pipeline does.
+        vol_target: annualised volatility target for position scaling. None uses
+            ``Settings.vol_target`` (default 0 = disabled).
 
     Returns:
         BacktestResult with all metrics.
@@ -113,6 +149,20 @@ def run_backtest(
         if signal == "breakout" else None
     )
 
+    # Factor gate (E2): resolve the per-bar factor signal so sizing matches live.
+    from arthaai.config import get_settings
+
+    use_factor_gate = get_settings().factor_gate if factor_gate is None else factor_gate
+    use_vol_target = get_settings().vol_target if vol_target is None else vol_target
+    factor_series = None
+    if use_factor_gate:
+        from arthaai.agents.quant_agent import factor_signal_series
+
+        try:
+            factor_series = factor_signal_series(symbol, df)
+        except Exception:
+            factor_series = None
+
     strat_rets, dir_rets, lo_rets, signs_correct, trades = [], [], [], 0, 0
     # Incremental signal-conditioned Kelly stats: at bar t we resolve the prior
     # bar's (direction, realized return) pair — fully known by bar t — and
@@ -122,6 +172,8 @@ def run_backtest(
     sig_wins = sig_losses = 0
     sig_win_sum = sig_loss_sum = 0.0
     prev_dir = 0
+    prev_frac = 0.0
+    cost_rate = cost_bps / 10_000.0
     for t in range(warmup, len(close) - 1):
         # Resolve the previous bar's signal against its realized return (known now).
         if t > warmup and prev_dir != 0:
@@ -149,14 +201,24 @@ def run_backtest(
             w, r = indicators.wr_from_tallies(sig_wins, sig_losses, sig_win_sum, sig_loss_sum)
         else:
             w, r = 0.5, 1.0
+        quant_input = {
+            "mu": stats["mu"], "variance": stats["variance"], "sigma": stats["sigma"],
+            "win_prob": w, "win_loss_ratio": r,
+        }
+        if factor_series is not None and t < len(factor_series):
+            fs = factor_series.iloc[t]
+            if fs == fs:  # not NaN
+                quant_input["factor_signal"] = float(fs)
         alloc = asset_manager.size(
-            {"mu": stats["mu"], "variance": stats["variance"], "win_prob": w, "win_loss_ratio": r}
+            quant_input, factor_gate=use_factor_gate, vol_target=use_vol_target
         )
         frac = alloc.final_fraction * direction            # signed exposure, policy-capped
+        turnover = abs(frac - prev_frac)
+        prev_frac = frac
         rt = fwd_ret.iloc[t]
         if pd.isna(rt):
             continue
-        strat_rets.append(frac * rt)
+        strat_rets.append(frac * rt - turnover * cost_rate)
         dir_rets.append(direction * rt)                    # 100% exposure long/short
         lo_rets.append(max(0, direction) * rt)             # long-only, flat when not bullish
         if direction != 0:

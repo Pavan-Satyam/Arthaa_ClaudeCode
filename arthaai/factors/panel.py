@@ -33,7 +33,7 @@ def build_panel(
         ``{"open": wide_df, "high": wide_df, ...}`` where each wide_df has
         index=dates, columns=symbols.
     """
-    columns = ["open", "high", "low", "close", "volume"]
+    columns = ["open", "high", "low", "close", "volume", "vwap", "amount"]
     if extra_columns:
         columns = columns + [c for c in extra_columns if c not in columns]
 
@@ -46,6 +46,15 @@ def build_panel(
         d.index = pd.to_datetime(d.index, utc=True, errors="coerce")
         d = d[~d.index.isna()]
         d = d.sort_index()
+        # Collapse to one bar per calendar day (defensive: legacy ingests stored
+        # two timestamps per day, which breaks cross-sectional date alignment).
+        d.index = d.index.normalize()
+        d = d[~d.index.duplicated(keep="last")]
+        # Derive standard columns that many Zoo factors require.
+        if "vwap" not in d.columns and {"high", "low", "close"}.issubset(d.columns):
+            d["vwap"] = (d["high"] + d["low"] + d["close"]) / 3.0
+        if "amount" not in d.columns and {"close", "volume"}.issubset(d.columns):
+            d["amount"] = d["close"] * d["volume"]
         normalized[symbol] = d
 
     # Build unified date index

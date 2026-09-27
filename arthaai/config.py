@@ -67,8 +67,37 @@ class Settings(BaseSettings):
     max_single_instrument: float = 0.05   # hard cap per instrument
     risk_free_rate: float = 0.04
 
+    # Alpha-Zoo factor gate (E2): lets the deterministic factor signal DAMPEN a
+    # long when it disagrees with the signal-conditioned Kelly edge. It can only
+    # reduce exposure (never amplify) and never overrides the policy cap. Disable
+    # with ARTHAAI_FACTOR_GATE=false.
+    factor_gate: bool = True
+    factor_dampening: float = 0.5   # multiplier when the factor signal conflicts
+    factor_epsilon: float = 0.0     # |signal| <= epsilon is treated as neutral
+
+    # Volatility targeting (C): scale exposure toward an annualised target vol.
+    # 0 disables it. Default only de-risks (max leverage 1.0); raise
+    # vol_max_leverage to allow leverage when realised vol is below target.
+    vol_target: float = 0.0
+    vol_max_leverage: float = 1.0
+
     # Gateway security
     dev_mode: bool = True                # False in production: enforce TLS cookies, reject dev-token fallback
+
+    # OAuth 2.1 / MCP access-token validation (ARTHA-107/108). When oauth_jwks_url
+    # is set, bearer tokens are validated as JWTs (signature + exp + iss + aud)
+    # against the IdP's JWKS; otherwise a static ARTHAAI_GATEWAY_TOKEN is used.
+    oauth_jwks_url: str = ""
+    oauth_issuer: str = ""
+    oauth_audience: str = ""
+    oauth_algorithms: str = "RS256"      # comma-separated, e.g. "RS256,ES256"
+
+    # CORS (ARTHA-509): comma-separated allowed origins. Empty = same-origin only.
+    cors_origins: str = ""
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     # London Strategic Edge — free market-data API (https://londonstrategicedge.com)
     # Key is in the unprefixed LSE_API_KEY env var (loaded by load_dotenv above).

@@ -13,7 +13,7 @@ from typing import Any
 
 from numpy.lib.stride_tricks import sliding_window_view
 
-__all__ = ["HAS_BOTTLENECK", "bn", "sliding_window_view"]
+__all__ = ["HAS_BOTTLENECK", "bn", "sliding_window_view"]  # noqa: F822 (bn via module __getattr__)
 
 _bn_initialised: bool = False
 _has_bottleneck: bool = False

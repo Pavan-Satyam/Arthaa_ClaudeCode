@@ -94,6 +94,26 @@ def _friendly_meta(symbol: str) -> tuple[str, str]:
         return lse_mod._friendly_meta(symbol)
 
 
+def _stored_preference(symbol: str) -> str | None:
+    """Per-asset provider preference from the DB, or None.
+
+    Best-effort: a database whose volume predates the provider columns must not
+    break ingestion, so any DB error degrades to "no preference".
+    """
+    try:
+        return timescale.get_preferred_provider(symbol)
+    except Exception:
+        return None
+
+
+def _record_provider(symbol: str, used: str) -> None:
+    """Record which provider served the last fetch. Best-effort (see above)."""
+    try:
+        timescale.record_ingest_provider(symbol, used)
+    except Exception:
+        pass
+
+
 def ingest_resilient(
     symbol: str,
     lookback_days: int = 730,
@@ -136,6 +156,13 @@ def ingest_resilient(
     else:
         start = now - timedelta(days=lookback_days)
 
+    # Honour a stored per-asset preference when the caller didn't force a source.
+    # (Set via `arthaai provider-status SYMBOL --prefer lse|yfinance`.)
+    if provider == "auto":
+        preference = _stored_preference(symbol)
+        if preference in ("lse", "yfinance"):
+            provider = preference
+
     # Route to the appropriate provider
     if provider == "lse":
         from arthaai.data import lse as lse_mod
@@ -153,9 +180,11 @@ def ingest_resilient(
         df, used = fetch_ohlcv(symbol, start, now, timeframe=timeframe)
 
     if df.empty:
+        _record_provider(symbol, used)
         return IngestResult(rows=0, provider=used, symbol=symbol, incremental=incremental)
 
     written = timescale.upsert_ohlcv(symbol, timeframe, df)
+    _record_provider(symbol, used)
 
     # Publish Kafka event (best-effort, never blocks)
     try:

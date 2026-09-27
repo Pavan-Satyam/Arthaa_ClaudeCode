@@ -64,6 +64,86 @@ def roc(close: pd.Series, window: int = 20) -> float | None:
     return float((close.iloc[-1] - prev) / prev)
 
 
+def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+    """True Range: max(high-low, |high-prev_close|, |low-prev_close|)."""
+    prev_close = close.shift(1)
+    return pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+
+def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> float | None:
+    """Wilder's Average True Range (latest bar). Volatility in price units."""
+    if len(close) < period + 1:
+        return None
+    tr = true_range(high, low, close).dropna()
+    val = _wilder_rma(tr, period).iloc[-1]
+    return None if pd.isna(val) else float(val)
+
+
+def bollinger(
+    close: pd.Series, window: int = 20, num_std: float = 2.0
+) -> dict[str, float] | None:
+    """Bollinger Bands over the trailing `window` bars (population std)."""
+    if len(close) < window:
+        return None
+    tail = close.tail(window)
+    mid = float(tail.mean())
+    sd = float(tail.std(ddof=0))
+    return {"lower": mid - num_std * sd, "mid": mid, "upper": mid + num_std * sd}
+
+
+def macd(
+    close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
+) -> dict[str, float] | None:
+    """MACD line, signal line and histogram (latest bar)."""
+    if len(close) < slow + signal:
+        return None
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return {
+        "macd": float(macd_line.iloc[-1]),
+        "signal": float(signal_line.iloc[-1]),
+        "hist": float(macd_line.iloc[-1] - signal_line.iloc[-1]),
+    }
+
+
+def obv(close: pd.Series, volume: pd.Series) -> float:
+    """On-Balance Volume: cumulative signed volume. Returns the latest value."""
+    direction = np.sign(close.diff().fillna(0.0))
+    return float((direction * volume).cumsum().iloc[-1])
+
+
+def vwap(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    window: int | None = None,
+) -> float | None:
+    """Volume-weighted average price of the typical price, optionally windowed."""
+    if len(close) == 0:
+        return None
+    typical = (high + low + close) / 3.0
+    vol = volume
+    if window is not None:
+        if len(close) < window:
+            return None
+        typical = typical.tail(window)
+        vol = vol.tail(window)
+    total_vol = float(vol.sum())
+    if total_vol == 0:
+        return None
+    return float((typical * vol).sum() / total_vol)
+
+
 def _adx_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> np.ndarray:
     """Full per-bar ADX series (Wilder). Internal helper for the regime gate."""
     h = high.to_numpy(dtype=float)

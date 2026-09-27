@@ -95,6 +95,12 @@ class TestFetchOhlcv:
 
 
 class TestIngestResilient:
+    @pytest.fixture(autouse=True)
+    def _no_provider_tracking(self, monkeypatch):
+        """Keep ingest tests DB-free: skip preference read + provider recording."""
+        monkeypatch.setattr("arthaai.db.timescale.get_preferred_provider", lambda s: None)
+        monkeypatch.setattr("arthaai.db.timescale.record_ingest_provider", lambda *a, **kw: None)
+
     def test_returns_ingest_result(self, monkeypatch):
         """ingest_resilient returns IngestResult with correct fields."""
         df = _make_df(n=50)
@@ -163,3 +169,62 @@ class TestIngestResilient:
         assert result.provider == "yfinance"
         assert result.rows == 25
         assert not lse_called
+
+    def test_preferred_provider_is_honoured_in_auto(self, monkeypatch):
+        """A stored per-asset preference forces that provider in auto mode."""
+        df = _make_df(n=12)
+        monkeypatch.setattr("arthaai.config.get_settings", lambda: type("S", (), {
+            "lse_api_key": "test-key", "lse_base_url": "https://fake.lse.com",
+        })())
+        monkeypatch.setattr("arthaai.db.timescale.asset_meta", lambda s: {"symbol": s})
+        monkeypatch.setattr("arthaai.db.timescale.latest_ts", lambda s, i: None)
+        monkeypatch.setattr("arthaai.db.timescale.upsert_ohlcv", lambda s, i, d: len(d))
+        monkeypatch.setattr("arthaai.db.timescale.get_preferred_provider", lambda s: "yfinance")
+        monkeypatch.setattr("arthaai.data.ingest._download", lambda *a, **kw: df)
+
+        lse_called = []
+        monkeypatch.setattr("arthaai.data.lse.download", lambda *a, **kw: lse_called.append(1) or _empty_df())
+
+        result = ingest_resilient("GLD", provider="auto")
+        assert result.provider == "yfinance"
+        assert not lse_called  # pinning yfinance skipped the LSE attempt entirely
+
+    def test_records_provider_after_fetch(self, monkeypatch):
+        """The provider actually used is persisted for diagnostics."""
+        df = _make_df(n=8)
+        recorded = []
+        monkeypatch.setattr("arthaai.config.get_settings", lambda: type("S", (), {
+            "lse_api_key": "test-key", "lse_base_url": "https://fake.lse.com",
+        })())
+        monkeypatch.setattr("arthaai.db.timescale.asset_meta", lambda s: {"symbol": s})
+        monkeypatch.setattr("arthaai.db.timescale.latest_ts", lambda s, i: None)
+        monkeypatch.setattr("arthaai.db.timescale.upsert_ohlcv", lambda s, i, d: len(d))
+        monkeypatch.setattr("arthaai.data.lse.download", lambda *a, **kw: df)
+        monkeypatch.setattr(
+            "arthaai.db.timescale.record_ingest_provider",
+            lambda sym, prov: recorded.append((sym, prov)),
+        )
+
+        ingest_resilient("GLD", provider="auto")
+        assert recorded == [("GLD", "lse")]
+
+    def test_db_error_in_tracking_does_not_break_ingest(self, monkeypatch):
+        """A DB predating the provider columns must not break ingestion."""
+        df = _make_df(n=5)
+
+        def _boom(*a, **kw):
+            raise RuntimeError('column "preferred_provider" does not exist')
+
+        monkeypatch.setattr("arthaai.config.get_settings", lambda: type("S", (), {
+            "lse_api_key": "test-key", "lse_base_url": "https://fake.lse.com",
+        })())
+        monkeypatch.setattr("arthaai.db.timescale.asset_meta", lambda s: {"symbol": s})
+        monkeypatch.setattr("arthaai.db.timescale.latest_ts", lambda s, i: None)
+        monkeypatch.setattr("arthaai.db.timescale.upsert_ohlcv", lambda s, i, d: len(d))
+        monkeypatch.setattr("arthaai.data.lse.download", lambda *a, **kw: df)
+        monkeypatch.setattr("arthaai.db.timescale.get_preferred_provider", _boom)
+        monkeypatch.setattr("arthaai.db.timescale.record_ingest_provider", _boom)
+
+        result = ingest_resilient("GLD", provider="auto")
+        assert result.rows == 5
+        assert result.provider == "lse"

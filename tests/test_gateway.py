@@ -54,7 +54,7 @@ def test_dashboard_cookie_authenticates_ohlcv(monkeypatch):
 
     # Mock the DB so /ohlcv returns immediately without a real connection.
     monkeypatch.setattr("arthaai.db.timescale.load_ohlcv", lambda sym, limit=120: empty_df)
-    monkeypatch.setattr("arthaai.data.ingest.ingest", lambda sym: None)
+    monkeypatch.setattr("arthaai.data.provider.ingest_resilient", lambda sym: None)
 
     # First request: get the cookie from the dashboard
     dash = client.get("/")
