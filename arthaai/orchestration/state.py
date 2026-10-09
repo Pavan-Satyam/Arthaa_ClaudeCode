@@ -17,5 +17,6 @@ class GraphState(TypedDict, total=False):
     quant: dict       # Quant Agent — return/variance stats + Kelly inputs
     news: dict        # News_Agent — sentiment
     alt: dict         # Alt_Agent — physical/alt data (stub)
+    correlation: dict # Correlation Regime agent — risk-off fusion detection
     verdict: dict     # Master Reasoning LLM — direction/confidence/rationale
     allocation: dict  # Asset Manager — Kelly-sized fraction

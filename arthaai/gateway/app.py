@@ -7,9 +7,11 @@ production this sits behind an mTLS-terminating API gateway (blueprint §6).
 
 from __future__ import annotations
 
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -20,11 +22,23 @@ from slowapi.util import get_remote_address
 from arthaai import __version__
 from arthaai.config import get_settings
 from arthaai.gateway.auth import Principal, client_key, require_principal
+from arthaai.gateway.mtls import require_mtls
+from arthaai.observability import metrics, tracing
 
 _DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    tracing.configure("arthaai-gateway")
+    yield
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="ArthaAI Gateway", version=__version__, description="Tier 1 secure ingress.")
+app = FastAPI(
+    title="ArthaAI Gateway", version=__version__,
+    description="Tier 1 secure ingress.", lifespan=_lifespan,
+)
 app.state.limiter = limiter
 
 # CORS (ARTHA-509): same-origin by default; explicit origins via ARTHAAI_CORS_ORIGINS.
@@ -42,6 +56,34 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
     from fastapi.responses import JSONResponse
 
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again shortly."})
+
+
+@app.middleware("http")
+async def _observe(request: Request, call_next):
+    """Record request count and latency (ARTHA-508). No-op without the extra."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    # Use the matched route template only; never the raw path, which is
+    # attacker-controlled and would let arbitrary 404s explode label cardinality.
+    route = getattr(request.scope.get("route"), "path", "__unmatched__")
+    metrics.HTTP_REQUESTS.labels(request.method, route, str(response.status_code)).inc()
+    metrics.HTTP_LATENCY.labels(request.method, route).observe(time.perf_counter() - start)
+    return response
+
+
+@app.get("/metrics")
+def metrics_endpoint(
+    principal: Principal = Depends(require_principal),
+    _mtls: None = Depends(require_mtls),
+) -> Response:
+    """Prometheus exposition endpoint (ARTHA-508). Authenticated like the data routes."""
+    if not metrics.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="prometheus-client is not installed (pip install -e '.[obs]').",
+        )
+    payload, content_type = metrics.render()
+    return Response(content=payload, media_type=content_type)
 
 
 class AnalyzeResponse(BaseModel):
@@ -86,6 +128,7 @@ def ohlcv(
     request: Request,
     limit: int = 120,
     principal: Principal = Depends(require_principal),
+    _mtls: None = Depends(require_mtls),
 ) -> dict:
     """Recent OHLCV bars for the dashboard chart; ingests on demand if missing.
 
@@ -129,14 +172,24 @@ def analyze(
     request: Request,
     skip_ingest: bool = False,
     principal: Principal = Depends(require_principal),
+    _mtls: None = Depends(require_mtls),
 ) -> AnalyzeResponse:
     """Run the full multi-agent analysis for an asset. Requires a bearer token."""
     from arthaai.orchestration import analyze as run_analyze
 
-    state = run_analyze(symbol, skip_ingest=skip_ingest)
+    symbol = symbol.upper()
+    start = time.perf_counter()
+    with tracing.span("analyze", **{"arthaai.symbol": symbol}):
+        state = run_analyze(symbol, skip_ingest=skip_ingest)
+    metrics.PIPELINE_LATENCY.observe(time.perf_counter() - start)
+
+    verdict = state.get("verdict", {})
+    metrics.ANALYSES.labels(symbol, verdict.get("direction", "neutral")).inc()
+    metrics.LLM_PROVIDER.labels(verdict.get("source", "unknown")).inc()
+
     return AnalyzeResponse(
-        symbol=symbol.upper(),
-        verdict=state.get("verdict", {}),
+        symbol=symbol,
+        verdict=verdict,
         allocation=state.get("allocation", {}),
-        evidence={k: state.get(k, {}) for k in ("db", "quant", "news", "alt")},
+        evidence={k: state.get(k, {}) for k in ("db", "quant", "news", "alt", "correlation")},
     )

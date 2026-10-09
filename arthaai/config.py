@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     max_single_instrument: float = 0.05   # hard cap per instrument
     risk_free_rate: float = 0.04
 
+    # Portfolio-level Kelly (ARTHA-309): hard cap on total exposure across all
+    # positions after correlation-aware de-risking. 1.0 = no leverage.
+    max_portfolio_exposure: float = 1.0
+
+    # Dynamic Kelly (ARTHA-311): scale the Kelly fraction by the volatility
+    # regime instead of using a static kelly_fraction. High vol -> smaller
+    # fraction (more conservative); low vol -> larger, bounded by [min, max].
+    dynamic_kelly: bool = False
+    dynamic_kelly_target_vol: float = 0.15
+    kelly_fraction_min: float = 0.10
+    kelly_fraction_max: float = 0.50
+
     # Alpha-Zoo factor gate (E2): lets the deterministic factor signal DAMPEN a
     # long when it disagrees with the signal-conditioned Kelly edge. It can only
     # reduce exposure (never amplify) and never overrides the policy cap. Disable
@@ -94,6 +106,18 @@ class Settings(BaseSettings):
 
     # CORS (ARTHA-509): comma-separated allowed origins. Empty = same-origin only.
     cors_origins: str = ""
+
+    # mTLS (ARTHA-110): terminated upstream (API gateway / service mesh), not
+    # in-process. When mtls_required is True (and dev_mode is False), requests
+    # must carry a trusted-proxy header proving the client cert was verified, so
+    # a deployment that strips mTLS fails closed. mtls_client_ca is informational
+    # (the CA bundle the upstream terminator validates against).
+    mtls_required: bool = False
+    mtls_client_ca: str = ""
+    # Comma-separated CIDRs of the trusted upstream terminator(s). The proxy
+    # headers are honored ONLY when the request source is in this set; without
+    # it, mTLS enforcement fails closed (a bare header is spoofable).
+    mtls_trusted_proxies: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

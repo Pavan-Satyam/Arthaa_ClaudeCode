@@ -1,8 +1,10 @@
 """Backtest primitives (DB-independent parts)."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
+from arthaai.backtest import engine
 from arthaai.backtest.engine import BacktestResult, _max_drawdown
 
 
@@ -22,3 +24,37 @@ def test_result_serialises():
     assert d["symbol"] == "GLD"
     assert d["total_return"] == 0.12 and d["hit_rate"] == 0.55
     assert d["long_short_return"] == 0.10 and d["long_only_return"] == 0.18
+
+
+def _ramp_frame(n=120):
+    closes = list(np.linspace(100.0, 200.0, n))
+    return pd.DataFrame({
+        "ts": pd.date_range("2024-01-01", periods=n, freq="B", tz="UTC"),
+        "open": closes,
+        "high": [c * 1.01 for c in closes],
+        "low": [c * 0.99 for c in closes],
+        "close": closes,
+        "volume": 1e6,
+    })
+
+
+def test_signal_series_all_long_matches_buy_and_hold(monkeypatch):
+    df = _ramp_frame()
+    monkeypatch.setattr(engine.timescale, "load_ohlcv", lambda *a, **k: df)
+    res = engine.run_backtest(
+        "GLD", warmup=20, limit=120, signal="composite",
+        signal_series=pd.Series([1.0] * 120), factor_gate=False,
+    )
+    assert res.trades == 120 - 20 - 1
+    assert res.long_only_return == pytest.approx(res.buy_hold_return, rel=1e-9)
+
+
+def test_signal_series_nonpositive_is_flat(monkeypatch):
+    df = _ramp_frame()
+    monkeypatch.setattr(engine.timescale, "load_ohlcv", lambda *a, **k: df)
+    res = engine.run_backtest(
+        "GLD", warmup=20, limit=120, signal="composite",
+        signal_series=pd.Series([-1.0] * 120), factor_gate=False,
+    )
+    assert res.trades == 0
+    assert res.long_only_return == pytest.approx(0.0)

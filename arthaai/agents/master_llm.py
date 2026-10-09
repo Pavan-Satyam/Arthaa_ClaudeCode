@@ -49,7 +49,7 @@ class Verdict:
 
 
 def _prompt(state: dict, symbol: str) -> str:
-    payload = {k: state.get(k) for k in ("db", "quant", "news", "alt") if state.get(k)}
+    payload = {k: state.get(k) for k in ("db", "quant", "news", "alt", "correlation") if state.get(k)}
     return f"Asset: {symbol}\nAgent evidence (GraphState):\n{json.dumps(payload, indent=2)}"
 
 
@@ -153,6 +153,12 @@ def _weighted_score(state: dict) -> tuple[float, list[str]]:
     if alt.get("available"):
         signals.append((alt["physical_score"], 0.25))
         notes.append(f"physical/alt signal {alt['physical_score']:+.2f}")
+    corr = state.get("correlation", {})
+    if corr.get("available"):
+        # Risk context, not a directional signal: no weight, just a note.
+        notes.append(
+            f"correlation regime {corr['regime']} (avg ρ {corr['avg_correlation']:+.2f})"
+        )
     if not signals:
         return 0.0, ["no evidence available"]
     wsum = sum(w for _, w in signals)

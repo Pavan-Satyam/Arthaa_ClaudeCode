@@ -88,4 +88,4 @@ Asset Manager Agent   → discrete Kelly (primary) + continuous Kelly (informati
 - Push to `origin/feat/arthaai-core` fails (403 permission denied) — GitHub account lacks write access to `Pavan-Satyam/Arthaa_ClaudeCode`
 - Qdrant client 1.19.0 vs server 1.12.4 version mismatch warning is cosmetic
 - Vault 404 warnings expected (run `arthaai seed-secrets` to populate; env fallback works)
-- `breakout_signal()` has no runtime caller yet — backtest uses `breakout_positions` directly; live `analyze` uses the signal selector in `db_agent`
+- `breakout_signal()` is called by the live signal selector in `db_agent` when ADX ≥ 25; the backtest uses `breakout_positions` directly

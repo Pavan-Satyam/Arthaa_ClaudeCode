@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from arthaai.execution.audit import AuditLog
+from arthaai.execution.fills import FillModel
 from arthaai.execution.state import (
     Fill,
     Portfolio,
@@ -45,6 +46,9 @@ class Order:
     notional: float
     stop_loss: float
     paper: bool = True
+    status: str = "filled"
+    filled_quantity: float = 0.0
+    slippage_bps: float = 0.0
 
 
 class ExecutionEngine:
@@ -58,13 +62,16 @@ class ExecutionEngine:
         drawdown_lookback: int = 5,
         stop_loss_pct: float = 0.08,
         audit: AuditLog | str | Path | None = None,
+        fill_model: FillModel | None = None,
     ) -> None:
         if equity is not None:
             initial_equity = equity
+        self.fill_model = fill_model or FillModel()
         self.portfolio = Portfolio(
             initial_equity=initial_equity,
             drawdown_trigger=drawdown_trigger,
             drawdown_lookback=drawdown_lookback,
+            fill_model=self.fill_model,
         )
         self.portfolio._equity_curve = [initial_equity]
         self.portfolio._peak_equity = initial_equity
@@ -112,25 +119,14 @@ class ExecutionEngine:
     def step(self, bar) -> dict:
         """Advance one bar: mark positions, fire stops/targets, update breaker."""
         before = self.portfolio.state
-        levels = {
-            sym: (pos.stop_price, pos.target_price)
-            for sym, pos in self.portfolio.positions.items()
-            if pos.state == PositionState.OPEN
-        }
         fills = self.portfolio.step(bar)
         for sym, fill in fills.items():
             if fill is None:
                 continue
-            stop, target = levels.get(sym, (None, None))
-            if stop is not None and fill.price == stop:
-                reason = "stop_loss"
-            elif target is not None and fill.price == target:
-                reason = "target"
-            else:
-                reason = "exit"
             self._audit(
                 "fill", symbol=sym, side=fill.side, quantity=fill.quantity,
-                price=fill.price, reason=reason, ts=fill.ts,
+                price=fill.price, reason=fill.reason or "exit",
+                slippage_bps=fill.slippage_bps, ts=fill.ts,
             )
         if self.portfolio.state != before:
             self._audit("breaker", state=self.portfolio.state.value)
@@ -143,6 +139,7 @@ class ExecutionEngine:
         last_price: float,
         direction: str,
         ts: pd.Timestamp | None = None,
+        bar: pd.Series | dict | None = None,
     ) -> Order:
         if not self.portfolio.is_buyable():
             raise TradingHalted(
@@ -156,28 +153,50 @@ class ExecutionEngine:
         notional = round(self.equity * fraction, 2)
         side = "buy" if direction == "bullish" else "sell"
         price = last_price
+        requested_qty = notional / price if price else 0.0
+        fill_ts = ts if ts is not None else pd.Timestamp.now(tz="UTC")
+
+        outcome = self.fill_model.apply(side, price, requested_qty, bar=bar)
+        if outcome.rejected:
+            order = Order(
+                symbol=symbol.upper(), side=side, notional=0.0, stop_loss=0.0,
+                status="rejected",
+            )
+            self.orders.append(order)
+            self._audit(
+                "reject", symbol=order.symbol, side=side, reason=outcome.reason, ts=fill_ts,
+            )
+            return order
+
+        fill_price = outcome.price
         stop = round(
-            price * (1 - self.stop_loss_pct) if side == "buy" else price * (1 + self.stop_loss_pct),
+            fill_price * (1 - self.stop_loss_pct) if side == "buy" else fill_price * (1 + self.stop_loss_pct),
             4,
         )
-        fill_ts = ts if ts is not None else pd.Timestamp.now(tz="UTC")
         fill = Fill(
             ts=fill_ts,
             symbol=symbol,
             side=side,
-            quantity=notional / price,
-            price=price,
+            quantity=outcome.quantity,
+            price=fill_price,
+            slippage_bps=outcome.slippage_bps,
+            reason="entry",
         )
-        is_new = pos.state == PositionState.FLAT
+        is_new = pos.state in (PositionState.FLAT, PositionState.CLOSED)
         if is_new:
             pos.open(fill, stop_price=stop, target_price=None)
             self.portfolio.record_entry_equity(fill.quantity, fill.price)
             self.portfolio.deposit(fill.notional())
-        order = Order(symbol=symbol.upper(), side=side, notional=notional, stop_loss=stop)
+        order = Order(
+            symbol=symbol.upper(), side=side, notional=fill.notional(), stop_loss=stop,
+            status="partial" if outcome.partial else "filled",
+            filled_quantity=outcome.quantity, slippage_bps=outcome.slippage_bps,
+        )
         self.orders.append(order)
         self._audit(
             "order", symbol=order.symbol, side=order.side, notional=order.notional,
-            stop_loss=order.stop_loss, paper=order.paper, ts=fill_ts,
+            stop_loss=order.stop_loss, paper=order.paper, status=order.status,
+            filled_quantity=order.filled_quantity, slippage_bps=order.slippage_bps, ts=fill_ts,
         )
         return order
 
@@ -197,18 +216,21 @@ class ExecutionEngine:
         pos = self.portfolio.positions.get(symbol)
         if pos is None or pos.state != PositionState.OPEN:
             return None
+        exit_price = self.fill_model.exit_price("sell", price)
         fill = Fill(
             ts=ts if ts is not None else pd.Timestamp.now(tz="UTC"),
             symbol=symbol,
             side="sell",
             quantity=pos.quantity,
-            price=price,
+            price=exit_price,
+            slippage_bps=self.fill_model.slippage_bps,
+            reason=reason,
         )
         pos.close(fill)
         self.portfolio.add_proceeds(fill.notional())
         self._audit(
             "fill", symbol=symbol, side="sell", quantity=fill.quantity,
-            price=fill.price, reason=reason, ts=fill.ts,
+            price=fill.price, reason=reason, slippage_bps=fill.slippage_bps, ts=fill.ts,
         )
         return fill
 

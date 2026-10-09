@@ -24,6 +24,7 @@ import pandas as pd
 
 from arthaai.agents import indicators
 from arthaai.execution.engine import ExecutionEngine
+from arthaai.execution.fills import FillModel
 from arthaai.execution.state import Fill, PositionState
 
 
@@ -40,6 +41,8 @@ class SimulationResult:
     max_drawdown: float
     equity_curve: list[float] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
+    rejected_orders: int = 0
+    partial_fills: int = 0
 
 
 def simulate_symbol(
@@ -55,6 +58,10 @@ def simulate_symbol(
     equity: float = 100_000.0,
     stop_loss_pct: float = 0.08,
     engine: ExecutionEngine | None = None,
+    slippage_bps: float = 0.0,
+    participation_rate: float | None = None,
+    reject_probability: float = 0.0,
+    fill_seed: int | None = None,
 ) -> SimulationResult:
     """Run the execution state machine bar-by-bar over ``df``.
 
@@ -69,6 +76,9 @@ def simulate_symbol(
         equity: Starting paper equity (ignored when ``engine`` is supplied).
         stop_loss_pct: Mandatory stop distance for every entry.
         engine: Optional pre-built engine (e.g. with an AuditLog attached).
+        slippage_bps / participation_rate / reject_probability / fill_seed: Fill
+            frictions; ignored when ``engine`` is supplied (use the engine's own
+            ``FillModel`` instead).
 
     Returns:
         SimulationResult with fills, stop/target counts and the equity curve.
@@ -99,8 +109,18 @@ def simulate_symbol(
         label, _ = indicators.trend_signal(close.iloc[: t + 1])
         return 1 if label == "bullish" else (-1 if label == "bearish" else 0)
 
-    eng = engine or ExecutionEngine(initial_equity=equity, stop_loss_pct=stop_loss_pct)
+    eng = engine or ExecutionEngine(
+        initial_equity=equity,
+        stop_loss_pct=stop_loss_pct,
+        fill_model=FillModel(
+            slippage_bps=slippage_bps,
+            participation_rate=participation_rate,
+            reject_probability=reject_probability,
+            seed=fill_seed,
+        ),
+    )
     entries = exits = stops = targets = 0
+    rejected = partial = 0
     fills: list[Fill] = []
     curve: list[float] = []
 
@@ -108,18 +128,13 @@ def simulate_symbol(
         bar = df.iloc[t]
 
         # 1) mark-to-market and fire stops/targets from any prior entry.
-        levels: tuple[float | None, float | None] = (None, None)
-        pos = eng.portfolio.positions.get(symbol)
-        if pos is not None and pos.state == PositionState.OPEN:
-            levels = (pos.stop_price, pos.target_price)
         step_fills = eng.step(bar)
         fill = step_fills.get(symbol)
         if fill is not None:
             fills.append(fill)
-            stop, target = levels
-            if stop is not None and fill.price == stop:
+            if fill.reason == "stop_loss":
                 stops += 1
-            elif target is not None and fill.price == target:
+            elif fill.reason == "target":
                 targets += 1
             else:
                 exits += 1
@@ -140,14 +155,20 @@ def simulate_symbol(
         pos = eng.portfolio.positions.get(symbol)
         flat = pos is None or pos.state != PositionState.OPEN
         if fill is None and flat and det == 1 and eng.portfolio.is_buyable():
-            eng.submit(
+            order = eng.submit(
                 symbol,
                 {"final_fraction": allocation_fraction},
                 float(bar["close"]),
                 "bullish",
                 ts=bar["ts"],
+                bar=bar,
             )
-            entries += 1
+            if order.status == "rejected":
+                rejected += 1
+            else:
+                entries += 1
+                if order.status == "partial":
+                    partial += 1
 
         # 4) equity at this bar's close (mark open position at close, not entry).
         curve.append(eng.portfolio.mark_to_market({symbol: float(bar["close"])}))
@@ -174,4 +195,6 @@ def simulate_symbol(
         max_drawdown=max_dd,
         equity_curve=curve,
         fills=fills,
+        rejected_orders=rejected,
+        partial_fills=partial,
     )

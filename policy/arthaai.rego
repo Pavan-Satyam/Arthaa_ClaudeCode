@@ -10,6 +10,7 @@ scopes := {
 	"quant_agent": {"load_ohlcv", "compute_stats"},
 	"news_agent": {"hybrid_search"},
 	"alt_agent": {"external_api"},
+	"correlation_regime": {"correlation_regime"},
 	"asset_manager": {"compute_stats", "kelly"},
 	"master_llm": {"llm_complete"},
 }

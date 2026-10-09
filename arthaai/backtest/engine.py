@@ -105,6 +105,7 @@ def run_backtest(
     cost_bps: float = 0.0,
     factor_gate: bool | None = None,
     vol_target: float | None = None,
+    signal_series: pd.Series | None = None,
 ) -> BacktestResult:
     """Walk-forward backtest with look-ahead-bias guards.
 
@@ -122,6 +123,10 @@ def run_backtest(
             backtest sizes exactly as the live pipeline does.
         vol_target: annualised volatility target for position scaling. None uses
             ``Settings.vol_target`` (default 0 = disabled).
+        signal_series: optional precomputed per-bar signal aligned to the loaded
+            (and sliced) OHLCV. When supplied, a positive value is a long and
+            ``<= 0`` is flat, overriding ``signal``/``adx_threshold``. Used for
+            cross-sectional / composite signals that need the wider universe.
 
     Returns:
         BacktestResult with all metrics.
@@ -132,6 +137,13 @@ def run_backtest(
         df = df[data_slice]
     if len(df) < warmup + 5:
         raise ValueError(f"not enough history for {symbol} (need > {warmup + 5} bars).")
+
+    ext = None
+    if signal_series is not None:
+        s = signal_series
+        if data_slice is not None:
+            s = s.iloc[data_slice]
+        ext = pd.Series(np.asarray(s, dtype=float)).reset_index(drop=True)
 
     close = df["close"].reset_index(drop=True)
     high = df["high"].reset_index(drop=True)
@@ -187,7 +199,11 @@ def run_backtest(
                     sig_loss_sum += abs(prev_ret)
 
         c_win = close.iloc[: t + 1]                       # only past data (no leakage)
-        if signal == "breakout":
+        if ext is not None:
+            value = ext.iloc[t] if t < len(ext) else float("nan")
+            direction = 1 if (value == value and value > 0) else 0
+            label = "bullish" if direction == 1 else "neutral"
+        elif signal == "breakout":
             direction = breakout_dirs[t]                   # held position at t
             label = "bullish" if direction == 1 else "bearish" if direction == -1 else "neutral"
         else:

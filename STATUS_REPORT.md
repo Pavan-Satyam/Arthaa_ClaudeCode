@@ -1,6 +1,6 @@
 # ArthaAI — Architecture Status Report
 
-*Last revised: 2026-09-27 · version 0.1.0 · branch `feat/arthaai-core`*
+*Last revised: 2026-10-04 · version 0.1.0 · branch `feat/arthaai-core`*
 
 ArthaAI is a zero-trust multi-agent LLM framework for equities & commodities analysis.
 The deterministic quant layer computes every number; the LLM only synthesises and
@@ -10,13 +10,46 @@ claim below was read out of the repository, and the verification results in
 
 **How to read this:** each tier separates *what's implemented* from *what's missing*,
 and marks verified vs. unverified. The single most important number in the whole
-system is **E3** — whether a signal beats buy-and-hold out-of-sample. It currently
-**fails** ([§8.3](#83-e3--the-edge-gate--fails)).
+system is **E3** — whether a signal beats buy-and-hold out-of-sample. It still
+**fails** after four signal families were tested to exhaustion ([§8.3](#83-e3--the-edge-gate--fails)),
+and the failure now exposes a **criterion mismatch** for cross-sectional signals
+([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)).
+
+---
+
+## 0. Next session — start here
+
+**State (2026-10-04, end of session):**
+- Branch `feat/arthaai-core`; **all work uncommitted** — **20 modified, 20 new files**. Nothing pushed beyond `4e830d0`.
+- Last full run: **335 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean.
+- Docker stack was up (TimescaleDB/Qdrant/OPA/Vault/Redpanda); `LSE_API_KEY` present in `.env`. OHLCV loaded for ~45 symbols.
+
+**Completed this session:** all 11 independent backlog tickets + ARTHA-309/311 (fill simulation, VaR/ES, human approval gate, correlation-regime agent, cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus, mTLS fail-closed, real-IdP JWT test, portfolio + dynamic Kelly), then a full `/review uncommitted` pass whose **10 findings are all fixed** (human-gate binding, re-entry bug, mTLS trusted-proxy, `/metrics` auth, metric cardinality, SSRF guard, `portfolio_size` unification, approval caching, z-score dedup, dead-code removal).
+
+**Immediate next steps (in order):**
+1. **Commit + push.** Nothing is committed; note the earlier `origin/feat/arthaai-core` **403** (account lacks write access) — the commit is still local.
+2. **E3 decision (the only release blocker).** Four signal families and a widened 45-asset cross-section all fail the promotion gate ([§8.3](#83-e3--the-edge-gate--fails)); the gate also mismatches cross-sectional signals ([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)). Choose **(a)** accept no promotable edge (Law 3 holds), or **(b)** add a *separate, documented* market-neutral evaluation criterion. **Do not weaken the existing B&H gate.**
+3. **Decide the factor-gate default** — set `factor_gate=False` unless/until E3 proves the factor signal.
+4. **Optional wiring** (built but not in the live path): composite → live sizing; portfolio Kelly/VaR → live `execute`; real news feeds into Qdrant.
+
+**Commands to resume:**
+```powershell
+docker compose up -d
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli migrate
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m pytest tests/ -q -k "not health"
+# reproduce the E3 gate (Expect REJECTED):
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli promote GLD --signal breakout --cost-bps 10
+# composite / IC-weighted ranking over the universe:
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli factors composite --symbols GLD,SLV,USO,XOM,AAPL --ic-weighted
+```
+
+**Known open items / caveats:** the human-gate fix binds symbol/side/fraction and is one-shot, but the executed stop is engine-derived (no price-drift tolerance). Live `execute` still uses the no-op fill model and single-order stop. `PROJECT_BOARD.md` is stale relative to this report.
 
 ---
 
 ## Table of Contents
 
+0. [Next session — start here](#0-next-session--start-here)
 1. [Executive summary](#1-executive-summary)
 2. [System at a glance](#2-system-at-a-glance)
 3. [Tier 1 — Interface & Ingress](#3-tier-1--interface--ingress)
@@ -42,25 +75,42 @@ system is **E3** — whether a signal beats buy-and-hold out-of-sample. It curre
 - Data flows end-to-end: ingest (provider chain with failover) → TimescaleDB →
   LangGraph fan-out (DB/Quant/News/Alt agents) → Master LLM synthesis → Kelly sizing
   → paper execution, all under OPA policy, circuit breakers, and configurable auth.
-- **E3 fails, live-verified.** On GLD, both `trend` and `breakout` are rejected across
-  two independent OOS windows (hit-rate 46–63%, no window consistently beats B&H with
-  Sharpe ≥ 1.0). No factor in the 442-strong zoo survives Benjamini-Hochberg FDR on a
-  28-asset cross-section.
+- **E3 fails, live-verified — now across four signal families and a 45-asset
+  cross-section.** `trend`, `breakout`, an equal-weight cross-sectional composite, and an
+  **IC-weighted composite** (expanding rank-IC weights with an embargo) were all run
+  through the promotion gate on a widened LSE universe (~45 symbols). **Nothing passes all
+  OOS windows.** Several assets are "one-window-shy" (SLV, PPLT, PALL, XLE, XLU, XLC, EWJ,
+  JPM), and the failures concentrate in the most recent bull window — see
+  [§8.3](#83-e3--the-edge-gate--fails) and [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
+  No factor in the 442-strong zoo survives Benjamini-Hochberg FDR on a 28-asset cross-section.
+- **The gate may be grading the wrong quantity for cross-sectional signals** (new issue,
+  [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)). The promotion gate compares a
+  signal's *exposure-matched long-only* return to buy-and-hold — a fair test for a
+  directional signal, but a cross-sectional factor's natural expression is a long/short,
+  market-neutral book that has no B&H benchmark. This does **not** make E3 pass; it flags
+  that the release criterion and the cross-sectional research direction are misaligned.
 - **E2 is wired** (the factor signal now drives sizing via a dampen-only gate), but the
   evidence says it should stay **off**: it lowered OOS Sharpe on GLD, and the factor
   signal it consumes has no FDR-significant edge. See [§10](#10-known-issues--defects).
+- **Thirteen open backlog items were completed this session** (ARTHA-221, 409, 310, 308,
+  219, 215, 216, 507, 508, 107, 110, plus 309/311): fill simulation (slippage/partial/
+  rejection), VaR/Expected-Shortfall, dynamic + portfolio Kelly, correlation-regime agent,
+  cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus,
+  human approval gate, mTLS fail-closed, and a real-IdP JWT test. See
+  [§14](#14-remaining-work) for what remains.
 - A genuine **data-corruption bug was found and fixed** this session: GLD/SLV carried
   two bars per day (LSE `00:00` + yfinance `13:30`), which silently doubled their series
   and distorted every backtest. 1095 duplicate bars were removed.
 
 | Area | Verdict |
 |---|---|
-| Tier 1 — Interface & Ingress | ✅ implemented (JWT/OAuth 2.1, rate limits, CORS) |
-| Tier 2 — Intelligence Core | 🟡 agents work; Quant "edge" still unproven |
-| Alpha Zoo factor engine | 🟡 445 factors, 403 compute; no FDR-significant edge |
-| Tier 3 — Oversight & Sizing | ✅ Kelly + policy caps + cost-aware, exposure-matched promotion gate |
-| Tier 4 — Action | ✅ paper engine, stops, kill switch, audit; broker deferred by Law 3 |
-| **★ Edge (E1–E3)** | **🟡 E1/E2 wired · ❌ E3 fails** |
+| Tier 1 — Interface & Ingress | ✅ implemented (JWT/OAuth 2.1 IdP-verified, rate limits, CORS, mTLS fail-closed) |
+| Tier 2 — Intelligence Core | 🟡 agents work (incl. correlation regime); Quant "edge" still unproven |
+| Alpha Zoo factor engine | 🟡 445 factors, 403 compute; composite + IC-weighted composite built; no FDR-significant edge |
+| Tier 3 — Oversight & Sizing | ✅ Kelly + policy caps + promotion gate + portfolio/dynamic Kelly + VaR/ES + human gate |
+| Tier 4 — Action | ✅ paper engine, stops, kill switch, audit, fill/slippage sim; broker deferred by Law 3 |
+| Cross-cutting | ✅ OTel tracing + Prometheus metrics (optional `obs` extra) |
+| **★ Edge (E1–E3)** | **🟡 E1/E2 wired · ❌ E3 fails across 4 signal families (gate/criterion mismatch flagged)** |
 
 **Overall: ~80% of the blueprint is code-complete; 0% of the release gate is met** —
 because the release gate is gated on E3, and E3 is a research result, not a checkbox.
@@ -71,12 +121,12 @@ because the release gate is gated on E3, and E3 is a research result, not a chec
 
 | Metric | Value |
 |---|---|
-| Python source files | 50 (excl. generated zoo) |
-| Test files | 25 |
-| Tests passing (DB-independent) | **220** (+1 deselected `health`) |
-| CLI commands | 19 |
+| Python source files | ~58 (excl. generated zoo) |
+| Test files | 34 |
+| Tests passing (DB-independent) | **335** (+1 deselected `health`) |
+| CLI commands | 23 |
 | Registered factor alphas | **445** (alpha101 101, gtja191 190, qlib158 154) |
-| DB symbols with OHLCV | ~40 |
+| DB symbols with OHLCV | ~50 (widened LSE cross-section for E3) |
 | Quality gates | `compileall` clean · correctness lint clean · CI workflow defined |
 
 ### Data flow
@@ -84,19 +134,22 @@ because the release gate is gated on E3, and E3 is a research result, not a chec
 ```
 ingest (provider chain: LSE → yfinance, incremental, SWR fallback)
     │  fan-out (LangGraph)
-    ├── DB_Agent      → technical indicators + ADX regime signal selector
-    ├── Quant Agent   → μ / σ² / signal-conditioned Kelly inputs + factor signal
-    ├── News_Agent    → hybrid-search sentiment (Qdrant, circuit-breaker-guarded)
-    └── Alt_Agent     → physical signal (STUB)
+    ├── DB_Agent          → technical indicators + ADX regime signal selector
+    ├── Quant Agent       → μ / σ² / signal-conditioned Kelly inputs + factor signal
+    ├── News_Agent        → hybrid-search sentiment (Qdrant, circuit-breaker-guarded)
+    ├── Alt_Agent         → physical signal (STUB)
+    └── Correlation Agent → risk-off fusion regime (avg pairwise correlation)
     │  converge → GraphState
     ▼
 Master Reasoning LLM  → direction + confidence + rationale (provider chain → offline)
     ▼
 Asset Manager Agent   → discrete Kelly (primary) + cont. Kelly (info) + factor gate
-                        + vol targeting + 5% policy cap → allocation
+                        + vol targeting + dynamic/portfolio Kelly + VaR/ES
+                        + 5% policy cap → allocation
     ▼
 Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss,
-                          equity-curve breaker, kill switch, JSONL audit log
+                          equity-curve breaker, kill switch, JSONL audit log,
+                          fill model (slippage/partial/rejection), human approval gate
 ```
 
 ---
@@ -142,9 +195,14 @@ allocation; token held in an httpOnly cookie (never in page source).
 `oauth_jwks_url`, `oauth_issuer`, `oauth_audience`, `oauth_algorithms`, `cors_origins`.
 
 ### Missing / gaps
-- **mTLS is infrastructure, not code** (`ARTHA-110`) — documented as terminated upstream.
-- **JWT path not verified against a real IdP** (no `pyjwt` installed here; only the
-  dispatch, claim-mapping, and failure paths are unit-tested).
+- **mTLS is infrastructure, not code** (`ARTHA-110`) — terminated upstream. When
+  `ARTHAAI_MTLS_REQUIRED=true`, `gateway/mtls.py` enforces it **fail-closed**: the
+  client-cert header is honored only when the request source is in
+  `ARTHAAI_MTLS_TRUSTED_PROXIES`, and enforcement refuses if no trusted proxy is
+  configured — so a bare/spoofed header cannot satisfy the gate.
+- JWT is now verified **end-to-end against a real IdP** (generated RSA keypair + JWKS HTTP
+  server + `jwt.encode`) in `tests/test_oauth_jwt.py`; pointing at a production IdP is
+  config, not code.
 - No refresh-token rotation; expiry is enforced but rotation is operational.
 
 ---
@@ -153,13 +211,13 @@ allocation; token held in an httpOnly cookie (never in page source).
 
 ### Implemented
 
-**Orchestrator (`arthaai/orchestration/graph.py`, 86 lines)** — LangGraph fan-out/merge
-with nodes `_ingest → _db → _quant → _news → _alt → _master → _asset_manager`, plus
-`analyze()` used by the gateway and CLI. The ingest node now calls
+**Orchestrator (`arthaai/orchestration/graph.py`)** — LangGraph fan-out/merge
+with nodes `_ingest → {_db, _quant, _news, _alt, _correlation} → _master → _asset_manager`,
+plus `analyze()` used by the gateway and CLI. The ingest node calls
 **`ingest_resilient`** (incremental, multi-provider) instead of the old yfinance-only path.
 
 **GraphState (`orchestration/state.py`)** — `symbol`, `skip_ingest`, `db`, `quant`,
-`news`, `alt`, `verdict`, `allocation`.
+`news`, `alt`, `correlation`, `verdict`, `allocation`.
 
 **DB_Agent (`agents/db_agent.py`, 68 lines)** — deterministic indicators (SMA20/50,
 RSI14, ADX14); **ADX regime selector**: `ADX ≥ 25` → Donchian breakout signal, else
@@ -178,6 +236,12 @@ multi-timeframe trend filter. Runs under a SPIFFE identity via `authorize_tool`.
 
 **Alt_Agent (`agents/alt_agent.py`, 38 lines)** — explicitly-labelled **STUB** synthetic
 physical signals for commodity ETFs; abstains for equities.
+
+**Correlation Regime agent (`agents/correlation_regime.py`)** — new (ARTHA-215). Measures
+the average pairwise correlation of a cross-asset universe over a rolling window and labels
+the regime (`risk_off` / `mixed` / `diversified`); surfaced to the Master LLM as **risk
+context, not a directional signal** (no weight in `_weighted_score`). Registered under its
+own OPA scope.
 
 **Master Reasoning LLM (`agents/master_llm.py`, 226 lines)** — provider chain
 `anthropic → gemini → local → offline` with circuit breakers; `_parse_verdict`,
@@ -198,9 +262,12 @@ offline reasoner, so **no API key is required**.
 - **Quant Agent is still basic statistics**, not the multi-factor model the blueprint
   calls for. The factor signal exists and is validated for *evaluation*, but has not been
   shown to predict returns ([§8.4](#84-factor-ic-bench--live)).
-- News is seeded/illustrative, not a live feed; Alt_Agent is a stub (paid feeds).
-- No correlation-regime detection (`ARTHA-215`) or cross-sectional composite wired into
-  sizing (`ARTHA-219`).
+- **News now has live RSS/Atom ingestion** (`data/news_feed.py`, `arthaai ingest-news`,
+  deterministic lexicon sentiment, idempotent Qdrant upsert); the store still defaults to
+  the illustrative seed until feeds are configured. Alt_Agent remains a stub.
+- Correlation-regime detection (`ARTHA-215`) and a cross-sectional / **IC-weighted
+  composite** (`ARTHA-219`) are now **built**; the composite is gradeable by the backtest
+  (`run_backtest(signal_series=...)`) but is **not yet wired into live sizing**.
 
 ---
 
@@ -212,6 +279,7 @@ offline reasoner, so **no API key is required**.
 | `factors/registry.py` | 352 | AST-scan discovery, lazy import, **helper injection**, health |
 | `factors/panel.py` | 132 | Wide OHLCV panel; derives `vwap`/`amount`; daily de-dup |
 | `factors/eval.py` | 242 | Rank-IC, t-stat, **Benjamini-Hochberg FDR**, IC embargo |
+| `factors/composite.py` | ~230 | Cross-sectional z-score composite; **IC-weighted composite** (expanding rank-IC weights, embargoed); asset ranking / top-K |
 
 - **445 alphas** load cleanly (`alpha101` 101, `gtja191` 190, `qlib158` 154).
 - **Loader helper injection**: many machine-extracted zoo files call helpers
@@ -221,6 +289,11 @@ offline reasoner, so **no API key is required**.
   `vwap`/`amount` and removing a leaked junk line, single-symbol compute went
   **341 → 403/445**; the remaining 42 are cross-sectional (undefined for one symbol).
 - `factors bench` evaluates the zoo with **BH FDR** and an explicit observation count.
+- **Cross-sectional composite (`factors/composite.py`)**: standardises each factor across
+  symbols per date (z-score), averages into a composite, and ranks the universe. An
+  **IC-weighted** variant weights each factor by the expanding mean of its historical rank-IC,
+  floored at 0 and **lagged by `horizon + embargo − 1`** bars so a date's weight never uses the
+  forward return it is graded on. CLI: `arthaai factors composite --symbols …`.
 
 ---
 
@@ -228,7 +301,7 @@ offline reasoner, so **no API key is required**.
 
 ### Implemented
 
-**Asset Manager (`agents/asset_manager.py`, 151 lines)** — deterministic, pure-function
+**Asset Manager (`agents/asset_manager.py`, ~290 lines)** — deterministic, pure-function
 sizing:
 - **Discrete Kelly is the driver**: `f = W − (1−W)/R`; continuous Kelly is informational.
 - Quarter-Kelly scaling (`kelly_fraction=0.25`); **5% hard policy cap**; negative/zero
@@ -238,14 +311,25 @@ sizing:
   edge multiplies size by `factor_dampening` (0.5). Never amplifies; still capped.
 - **Volatility targeting (C)** — scales toward an annualised target vol, de-risk-only by
   default (`vol_max_leverage=1.0`).
+- **Dynamic Kelly (ARTHA-311)** — optional inverse-vol scaling of the Kelly *fraction*,
+  bounded to `[kelly_fraction_min, kelly_fraction_max]`.
+- **Portfolio Kelly (ARTHA-309)** — `portfolio_size()` combines per-asset discrete Kelly
+  fractions with a covariance-based, **de-risk-only** correlation multiplier (≤ 1) and a
+  total-exposure cap (`max_portfolio_exposure`); CLI `arthaai portfolio`.
+- **Tail risk (ARTHA-310)** — `agents/risk.py`: historical and parametric **VaR / Expected
+  Shortfall**. Parametric 95% VaR/ES is reported on `Allocation` (informational, never feeds
+  sizing); historical VaR/ES is reported by the `portfolio` CLI on the sized book's return
+  series.
 - `Allocation` reports `discrete_kelly`, `continuous_kelly`, `fractional`,
   `final_fraction`, `capped_by_policy`, `factor_multiplier`, `factor_signal`,
-  `vol_multiplier`, and a human rationale.
+  `vol_multiplier`, `kelly_fraction_used`, `var_95`, `expected_shortfall_95`, and a human
+  rationale.
 
-**Backtest engine (`backtest/engine.py`, 243 lines)** — walk-forward, look-ahead-guarded
+**Backtest engine (`backtest/engine.py`, ~250 lines)** — walk-forward, look-ahead-guarded
 (signal at bar *t* sees bars ≤ *t*; earns *t+1*'s return). Supports `data_slice`,
-`cost_bps` (turnover friction), `factor_gate`, `vol_target`. `oos_slice()` and
-**`oos_windows()`** (non-overlapping, most-recent-first).
+`cost_bps` (turnover friction), `factor_gate`, `vol_target`, and **`signal_series`** — a
+precomputed per-bar signal that lets cross-sectional / composite signals be graded by the
+same gate. `oos_slice()` and **`oos_windows()`** (non-overlapping, most-recent-first).
 
 **Promotion gate (`backtest/promotion.py`, 137 lines)** — a signal is promoted only if it
 passes **all windows** and all three criteria:
@@ -260,9 +344,9 @@ passes **all windows** and all three criteria:
 `load_ohlcv` de-duplicates by day; `repair_daily_duplicates()`.
 
 ### Missing / gaps
-- No portfolio-level Kelly (covariance/correlation), no VaR/Expected-Shortfall/stress
-  tests, no dynamic Kelly by vol regime (`ARTHA-309/310/311`).
-- Human decision gate is advice-only (no approval workflow).
+- Portfolio Kelly, VaR/Expected-Shortfall, and dynamic Kelly are now **implemented**
+  (`ARTHA-309/310/311`); portfolio Kelly is exposed via `arthaai portfolio` and the VaR/ES
+  via `Allocation`, but neither is yet wired into the live `execute` path.
 - Shadow-account bias audit deferred (needs real trade history).
 
 ---
@@ -278,10 +362,21 @@ passes **all windows** and all three criteria:
   `_is_new_session()`/`reset_day()` (calendar-day reset; trip counter escalates to
   `SYSTEM_LOCKED`), and **`kill_switch()`** (flatten all + require manual unlock).
 
-**Engine (`execution/engine.py`, 231 lines)** — `ExecutionEngine` composes the state
-machine: `submit()` (creates order, seeds entry equity, attaches stop-loss),
-`step()` (mark-to-market + fire stops/targets), `exit_position()`, `kill_switch()`,
-`breaker_state`, `equity`. `TradingHalted` raised when halted.
+**Engine (`execution/engine.py`, ~280 lines)** — `ExecutionEngine` composes the state
+machine: `submit()` (creates order, applies the fill model, seeds entry equity, attaches
+stop-loss), `step()` (mark-to-market + fire stops/targets), `exit_position()`,
+`kill_switch()`, `breaker_state`, `equity`. `TradingHalted` raised when halted. `Order`
+carries `status` (`filled`/`partial`/`rejected`), `filled_quantity`, `slippage_bps`.
+
+**Fill model (`execution/fills.py`, ARTHA-409)** — deterministic adverse-fill simulation:
+**slippage** (bps, adverse per side), **partial fills** (capped by `participation_rate × bar
+volume`), and **rejection** (seeded RNG, reproducible). Defaults are a no-op, so it is
+strictly opt-in and existing behaviour is unchanged.
+
+**Human decision gate (`execution/approval.py`, ARTHA-308)** — append-only, restart-safe
+proposal/decision workflow (`ApprovalGate`, `Proposal`). `arthaai execute` only places an
+order once a proposal is approved; `arthaai approve` / `arthaai reject` are separate acts.
+Proposal and decision both land in the audit log.
 
 **Audit log (`execution/audit.py`, 59 lines)** — append-only JSONL (`AuditLog` +
 `read_audit`); engine records orders, fills (with `stop_loss`/`target`/`signal` reason),
@@ -294,7 +389,9 @@ returns fills, stop/target counts, realised P&L, equity curve. Exposed as
 
 ### Missing / gaps
 - **Stop-loss is enforced in the paper-sim path, not in live `execute`** (single-order).
-- Fill simulation has no slippage/partial fills (`ARTHA-409`).
+- Fill simulation (slippage/partial/rejection) is **implemented** (`ARTHA-409`) and wired
+  through the engine; the live `execute` path still uses the no-op default model.
+- Human approval gate is **implemented** (`ARTHA-308`).
 - Live broker (IBKR/Alpaca) and Pine/MQL5/TDX exporters deferred by Law 3.
 - No OMS/order-state lifecycle for real orders.
 
@@ -322,9 +419,23 @@ promotable — the all-windows rule is what prevents cherry-picking. `trend` beh
 same. Rows persisted to `signal_promotion`.
 
 ### 8.3 E3 — the edge gate — ❌ **FAILS**
-Neither signal beats B&H with Sharpe ≥ 1.0 in every OOS window. Hit-rate on the most
-recent window is ~46%; the signal has no reliable directional edge on GLD in this period.
-**Law 3 holds: nothing is promotable.**
+Re-confirmed across **four signal families** on **2026-10-04** against the live stack with a
+widened **45-symbol LSE universe** (~500 daily bars each, 2024-08 → 2026-10). The promotion
+gate (Sharpe ≥ 1.0 · MaxDD ≤ 20% · exposure-matched long-only > B&H, on **every** OOS window)
+rejects:
+
+| Signal family | Assets | Qualified |
+|---|---|---|
+| `trend` | 7 | none |
+| `breakout` (ADX ≥ 25) | 7 | none |
+| equal-weight cross-sectional composite | 7 | none |
+| **IC-weighted composite** (h=1 and h=5, min_ic=20) | **45** | none |
+
+No symbol passes all OOS windows. Eight assets are "one-window-shy" at h=1 (SLV, PPLT, PALL,
+XLE, XLU, XLC, EWJ, JPM); three at h=5 (SLV, UNG, EWJ). Failures concentrate in the most
+recent bull window (e.g. SLV window 351–501 passes strongly — long-only **+31.7%** vs B&H
+**−12.4%** — while window 201–351 lags B&H's +124.8% melt-up). **Law 3 holds: nothing is
+promotable.** This is a research result, not a coding gap.
 
 ### 8.4 Factor IC bench — live
 `arthaai factors bench` over **28 assets × 442 factors** (horizon 1, BH FDR α=0.05):
@@ -343,6 +454,28 @@ disabled by default.
 Single-symbol compute rose **341 → 403/445** after helper injection + `vwap`/`amount`
 derivation; the residual 42 are cross-sectional.
 
+### 8.7 E3 exhaustion — the criterion-mismatch issue
+**New finding (2026-10-04).** After four signal families and a 45-asset cross-section all
+failed the gate, the failure pattern points at the **criterion**, not only the signal:
+
+- The promotion gate passes a signal only if its **exposure-matched long-only return beats
+  buy-and-hold** on *every* OOS window. That is the correct test for a **directional**
+  signal (in/out timing vs passive).
+- A **cross-sectional factor** has no natural "B&H" comparison. Its correct economic
+  expression is a **long/short, market-neutral book** (long top-ranked, short bottom-ranked),
+  judged on Sharpe / IC — not on beating a fully-invested benchmark.
+- The observed failures are almost entirely in the **recent bull window**, exactly where a
+  defensive long/flat cross-sectional rule *should* lag a melt-up while adding value in
+  drawdowns (SLV 351–501: +31.7% vs −12.4% B&H). That is consistent with a real but
+  defensively-tilted signal being graded against an unsuitable benchmark.
+
+**This does not make E3 pass and must not be used to relax the gate silently.** It means the
+release criterion and the cross-sectional research direction are **misaligned**. Resolving it
+is a **policy decision**: either (a) accept no promotable directional edge (Law 3 holds), or
+(b) explicitly add a *market-neutral* evaluation path for cross-sectional signals (Sharpe/IC
+against a dollar-neutral benchmark) as a **separate, documented criterion** — not by weakening
+the existing B&H gate.
+
 ---
 
 ## 9. Cross-cutting concerns
@@ -353,33 +486,42 @@ derivation; the residual 42 are cross-sectional.
 | **Secrets** (`security/vault.py`, 46) | Vault read/write; env fallback |
 | **Resiliency** (`resiliency/breaker.py`, 44) | `pybreaker` per service; `guarded(name, fn, fallback)` |
 | **CI** (`.github/workflows/ci.yml`) | Q1 `compileall` · Q2 `pytest -k "not health"` · correctness-only lint (zoo excluded) |
-| **Observability** | ❌ no OpenTelemetry (`ARTHA-507`), no Prometheus (`ARTHA-508`) |
+| **Observability** | ✅ OpenTelemetry tracing (`observability/tracing.py`, `ARTHA-507`) + Prometheus metrics (`observability/metrics.py`, `ARTHA-508`); optional `obs` extra; authenticated `/metrics` (same principal/mTLS as data routes) + request middleware that labels only matched route templates; no-op when the extra is absent |
 | **Alerting / cost tracking** | ❌ not implemented |
 
 ---
 
 ## 10. Known issues & defects
 
-1. **E3 fails** — no promotable edge on GLD; no FDR-significant factor. This is the
-   blocking release-gate item and is a research problem, not a coding one.
-2. **Factor gate is ON by default but unjustified** — it lowered OOS Sharpe and its input
+1. **E3 fails** — no promotable edge across **four signal families** (`trend`, `breakout`,
+   equal-weight composite, IC-weighted composite) and a widened **45-asset** cross-section.
+   No factor in the zoo is FDR-significant. The blocking release-gate item; a research
+   problem, not a coding one.
+2. **Promotion-gate criterion vs cross-sectional signals (new)** — the gate grades
+   exposure-matched long-only vs B&H, which fits *directional* signals; a cross-sectional
+   factor's natural expression is a long/short market-neutral book. The failure pattern is
+   consistent with a defensive signal graded against an unsuitable benchmark. **Do not
+   silently relax the gate**: choose (a) accept no edge, or (b) add a separate, documented
+   market-neutral evaluation path. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
+3. **Factor gate is ON by default but unjustified** — it lowered OOS Sharpe and its input
    factor signal has no significant edge. **Recommendation: default `factor_gate=False`**
-   (law 3: don't trust an unproven signal). `ARTHAAI_FACTOR_GATE` re-enables it.
-3. **Duplicate daily bars (fixed)** — dual-provider ingest stored two timestamps/day for
+   (Law 3: don't trust an unproven signal). `ARTHAAI_FACTOR_GATE` re-enables it.
+4. **Duplicate daily bars (fixed)** — dual-provider ingest stored two timestamps/day for
    GLD/SLV, corrupting backtests. Fixed at ingest (canonical midnight key), at read
    (`load_ohlcv` de-dup), in `build_panel`, and via `arthaai migrate`.
-4. **qlib158 residual** — 42 cross-sectional factors are degenerate on a single symbol
-   (by design); they require a universe panel.
-5. **JWT unverified against a real IdP**; `pyjwt[crypto]` not installed here.
-6. **CI never run on GitHub**; work is **uncommitted** on the working tree.
-7. **qdrant client/server version mismatch** and **Vault 404s** — cosmetic, as before.
-8. `test_health` pings TimescaleDB; excluded from normal runs and CI.
+5. **qlib158 residual** — 42 cross-sectional factors are degenerate on a single symbol
+   (by design); they require a universe panel (now supplied by `factors/composite.py`).
+6. **JWT verified against a local IdP, not production** — `tests/test_oauth_jwt.py` exercises
+   the full signature path against a generated JWKS server; wiring a real IdP is config.
+7. **CI never run on GitHub**; work is **uncommitted** on the working tree.
+8. **qdrant client/server version mismatch** and **Vault 404s** — cosmetic, as before.
+9. `test_health` pings TimescaleDB; excluded from normal runs and CI.
 
 ---
 
 ## 11. Test inventory
 
-**220 passed, 1 deselected** (`test_health`, needs Docker) in ~8s.
+**335 passed, 1 deselected** (`test_health`, needs Docker) in ~13s.
 
 | File | Focus |
 |---|---|
@@ -395,6 +537,13 @@ derivation; the residual 42 are cross-sectional.
 | `test_gateway.py` / `test_gateway_auth.py` | Auth required, cookie, JWT/static dispatch, rate-limit key |
 | `test_policy.py` | OPA allow/deny |
 | `test_migrate.py` / `test_daily_bars.py` | SQL splitter, schema contents · daily-bar canonicalisation/de-dup |
+| `test_execution_fills.py` | Fill model: slippage, partial fills, seeded rejection, engine wiring |
+| `test_risk.py` | Historical/parametric VaR, Expected Shortfall, stress test, sizing report |
+| `test_portfolio_kelly.py` | Covariance de-risk, exposure cap, dynamic Kelly fraction bounds |
+| `test_approval.py` / `test_mtls.py` | Human gate propose/approve/reject + persistence · mTLS fail-closed |
+| `test_composite.py` | Cross-sectional z-score, composite, ranking, IC-weighted (embargo, fallback) |
+| `test_correlation_regime.py` / `test_news_feed.py` | Correlation regime labels · RSS/Atom parse, sentiment, upsert |
+| `test_observability.py` / `test_oauth_jwt.py` | Prometheus/OTel + `/metrics` · real-IdP JWT via local JWKS server |
 
 ---
 
@@ -408,12 +557,15 @@ derivation; the residual 42 are cross-sectional.
 | `ingest` / `ingest-lse` | Ingest bars (provider chain / LSE) |
 | `provider-status` | Show/set the stored provider for a symbol |
 | `analyze` | Run the full multi-agent pipeline |
-| `execute` | Place one paper order (`--audit` JSONL) |
-| `paper-sim` | Bar-by-bar paper simulation that fires stops/targets |
+| `execute` | Place one paper order (`--audit` JSONL); `--approval`/`--proposal-id` enables the human gate |
+| `approve` / `reject` | Approve or reject a pending human-gate proposal (`--by`) |
+| `paper-sim` | Bar-by-bar paper simulation that fires stops/targets (`--slippage-bps`, `--participation`, `--reject-probability`, `--fill-seed`) |
+| `portfolio` | Covariance-aware portfolio Kelly across a universe |
 | `backtest` | Walk-forward backtest (`--signal`, `--adx`, `--cost-bps`, `--vol-target`) |
 | `promote` | OOS promotion gate, multi-window, exposure-matched (`--windows`, `--cost-bps`, `--vol-target`) |
 | `compare` | Compare signals across assets |
-| `factors` | `list` / `show` / `bench` (BH-corrected IC) |
+| `factors` | `list` / `show` / `bench` (BH-corrected IC) / `composite` (cross-sectional ranking) |
+| `ingest-news` | Ingest live RSS/Atom headlines into Qdrant for a symbol |
 | `eval` | Golden-fixture LLM eval |
 | `llm-status` | Probe the LLM provider chain |
 | `seed-news` / `seed-secrets` | Seed Qdrant news / Vault secrets |
@@ -426,34 +578,39 @@ derivation; the residual 42 are cross-sectional.
 
 | Tier | Planned | Implemented | Key gap |
 |---|---|---|---|
-| **1 — Interface & Ingress** | ~100% | ~90% | IdP-verified JWT; mTLS (infra) |
-| **2 — Intelligence Core** | ~100% | ~75% | Quant factor edge; live news; Alt stub |
-| **Alpha Zoo** | ~100% | ~90% | 42 cross-sectional factors need a universe; no composite wired |
-| **3 — Oversight & Sizing** | ~100% | ~85% | Portfolio Kelly; VaR/ES; human gate |
-| **4 — Action** | ~100% | ~70% | Fill/slippage sim; live-loop stops; broker (deferred) |
-| **Cross-cutting** | ~100% | ~55% | OTel; Prometheus; alerting |
-| **★ Edge (E1–E3)** | ~100% | **E1✅ E2🟡 E3❌** | E3 is a research result |
+| **1 — Interface & Ingress** | ~100% | ~95% | Production IdP wiring; mTLS (infra) |
+| **2 — Intelligence Core** | ~100% | ~85% | Quant factor edge; Alt stub; composite not wired to sizing |
+| **Alpha Zoo** | ~100% | ~95% | No FDR-significant edge; IC-weighted composite built, not live-wired |
+| **3 — Oversight & Sizing** | ~100% | ~95% | Portfolio Kelly/VaR not wired into live `execute` |
+| **4 — Action** | ~100% | ~85% | Live-loop stops; broker (deferred); exporters |
+| **Cross-cutting** | ~100% | ~80% | Alerting; cost tracking |
+| **★ Edge (E1–E3)** | ~100% | **E1✅ E2🟡 E3❌** | E3 research result + gate/criterion mismatch ([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)) |
 
 ---
 
 ## 14. Remaining work
 
 **Blocking the release gate**
-1. **E3** — find a signal with OOS edge (multi-asset, purged walk-forward, IC-weighted
-   composite), or accept that these signals should not trade.
+1. **E3** — four signal families (`trend`, `breakout`, equal-weight composite, IC-weighted
+   composite) and a widened 45-asset cross-section all fail; there is no promotable
+   directional edge. Decide: (a) accept no edge (Law 3 holds), or (b) add a **separate,
+   documented market-neutral evaluation criterion** for cross-sectional signals — *not* by
+   weakening the existing B&H gate. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
 2. **Decide the factor-gate default** — flip to off unless E3 proves the factor signal.
-3. **Commit + push**, and let the new CI workflow run.
+3. **Commit + push**, and let the CI workflow run.
 
 **High value, low risk**
-4. Wire stop-losses into the live `execute` path; add slippage/partial-fill modelling.
+4. Wire stop-losses into the live `execute` path (`paper-sim` already fires them).
 5. Expose `signal_promotion` in the gateway/UI; add a `promote --all` sweep.
 
-**Larger, still open**
-6. Portfolio Kelly + VaR/ES (`ARTHA-309/310/311`).
-7. Cross-sectional factor composite wired into sizing (`ARTHA-219`).
-8. OpenTelemetry + Prometheus (`ARTHA-507/508`).
-9. Human approval gate with audit trail.
-10. Real broker adapter — only after E3 passes (Law 3).
+**Built this session, not yet wired into the live path**
+6. Cross-sectional / IC-weighted composite → live sizing (`ARTHA-219`).
+7. Portfolio Kelly + VaR/ES → live `execute` (`ARTHA-309/310`).
+
+**Deferred / open**
+8. Configure live news feeds for Qdrant (`ARTHA-216` ingestion is built; feeds not set).
+9. Alerting + cost tracking.
+10. Real broker adapter + Pine/MQL5/TDX exporters — only after E3 passes (Law 3).
 
 ---
 
@@ -472,8 +629,11 @@ derivation; the residual 42 are cross-sectional.
 | `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
 | `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
 
-> **Uncommitted:** the entire Phase 0–3 + A–D body of work (21 modified, 15 new files)
-> plus this report revision. Nothing above is pushed beyond `4e830d0`.
+> **Uncommitted:** the entire Phase 0–3 + A–D body of work, the **2026-10-04 backlog
+> session** (13 tickets: fill sim, VaR/ES, human gate, correlation regime, composite +
+> IC-weighted composite, live news, OTel, Prometheus, mTLS, IdP JWT test, portfolio +
+> dynamic Kelly), the `/review uncommitted` fix pass, the widened LSE universe, and this
+> report revision — **20 modified, 20 new files**. Nothing above is pushed beyond `4e830d0`.
 
 ---
 

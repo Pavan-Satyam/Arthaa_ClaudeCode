@@ -73,6 +73,24 @@ def seed_news() -> None:
     console.print(f"seeded [bold]{n}[/] news documents into Qdrant.")
 
 
+@app.command("ingest-news")
+def ingest_news(
+    symbol: str,
+    feeds: str = typer.Option(..., help="Comma-separated RSS/Atom feed URLs."),
+    limit: int = typer.Option(10, help="Max items per feed."),
+) -> None:
+    """Pull live RSS/Atom headlines into Qdrant for a symbol (ARTHA-216)."""
+    from arthaai.data.news_feed import ingest_news as run_ingest
+
+    urls = [u.strip() for u in feeds.split(",") if u.strip()]
+    if not urls:
+        console.print("[red]No feed URLs supplied.[/]")
+        raise typer.Exit(1)
+    with console.status(f"[bold]ingesting {len(urls)} feed(s) for {symbol.upper()}…"):
+        n = run_ingest(symbol, urls, limit_per_feed=limit)
+    console.print(f"ingested [bold]{n}[/] news documents for {symbol.upper()} into Qdrant.")
+
+
 @app.command()
 def universe(
     action: str = typer.Argument("sync", help="sync | count | search"),
@@ -247,9 +265,15 @@ def execute(
     equity: float = typer.Option(100_000, help="Paper account equity."),
     skip_ingest: bool = typer.Option(False),
     audit: str = typer.Option("", help="Append the paper order to this JSONL audit log."),
+    approval: str = typer.Option(
+        "", help="Enable the human decision gate, persisting proposals to this JSONL path."
+    ),
+    proposal_id: str = typer.Option(
+        "", help="Approved proposal id to execute (requires --approval)."
+    ),
 ) -> None:
     """Run the pipeline, then place a PAPER order through Tier 4 guardrails."""
-    from arthaai.execution import ExecutionEngine, TradingHalted
+    from arthaai.execution import ApprovalGate, ExecutionEngine, TradingHalted
     from arthaai.orchestration import analyze as run_analyze
 
     symbol = symbol.upper()
@@ -264,11 +288,66 @@ def execute(
         raise typer.Exit(0)
 
     engine = ExecutionEngine(equity=equity, audit=audit or None)
+
+    # --- Human decision gate (ARTHA-308) ------------------------------------
+    # With --approval the order cannot be placed until a person approves the
+    # proposal in a separate step; without a proposal id this run only records
+    # the proposal and stops.
+    if approval:
+        gate = ApprovalGate(approval)
+        if not proposal_id:
+            side = "buy" if direction == "bullish" else "sell"
+            fraction = float(alloc.get("final_fraction", 0.0))
+            notional = round(engine.equity * fraction, 2)
+            stop = round(
+                last_price * (1 - engine.stop_loss_pct)
+                if side == "buy"
+                else last_price * (1 + engine.stop_loss_pct),
+                4,
+            )
+            proposal = gate.propose(
+                symbol=symbol, side=side, notional=notional, stop_loss=stop,
+                final_fraction=fraction, rationale=alloc.get("rationale", ""),
+            )
+            console.print(Panel(
+                f"[bold]pending approval[/] · proposal {proposal.id}\n"
+                f"{side.upper()} {symbol} · ${notional:,.2f} · stop @ {stop}\n\n"
+                f"[dim]approve: arthaai approve {approval} {proposal.id} --by <name>\n"
+                f"reject:  arthaai reject {approval} {proposal.id} --by <name>[/]",
+                title="Tier 3 · human decision gate", border_style="yellow",
+            ))
+            raise typer.Exit(0)
+
+        # Bind execution to the approved proposal: same symbol, same side, and
+        # the approved fraction — and the proposal is consumed exactly once.
+        proposal = gate.get(proposal_id)
+        if proposal is None:
+            console.print(f"[red]No proposal {proposal_id} in {approval}.[/]")
+            raise typer.Exit(1)
+        if proposal.status != "approved":
+            console.print(
+                f"[red]Proposal {proposal_id} is {proposal.status}, not approved — "
+                "no order placed.[/]"
+            )
+            raise typer.Exit(1)
+        actual_side = "buy" if direction == "bullish" else "sell"
+        if proposal.symbol != symbol or proposal.side != actual_side:
+            console.print(
+                f"[red]Proposal {proposal_id} is for {proposal.symbol} {proposal.side}, "
+                f"not {symbol} {actual_side} — refusing; re-propose.[/]"
+            )
+            raise typer.Exit(1)
+        alloc = dict(alloc)
+        alloc["final_fraction"] = proposal.final_fraction
+
     try:
         order = engine.submit(symbol, alloc, last_price, direction)
     except TradingHalted as exc:
         console.print(Panel(str(exc), title="Tier 4 · trading halted", border_style="red"))
         raise typer.Exit(1)
+
+    if approval:
+        gate.mark_executed(proposal_id)
 
     console.print(Panel(
         f"[bold]{order.side.upper()}[/] {order.symbol}  ·  notional ${order.notional:,.2f}  "
@@ -282,6 +361,57 @@ def execute(
     console.print("[dim]Simulated order only — no broker contacted.[/]")
 
 
+@app.command()
+def approve(
+    path: str,
+    proposal_id: str,
+    by: str = typer.Option(..., "--by", help="Approver identity."),
+) -> None:
+    """Approve a pending human decision gate proposal."""
+    from arthaai.execution import ApprovalGate
+
+    gate = ApprovalGate(path)
+    try:
+        proposal = gate.decide(proposal_id, approved=True, by=by)
+    except KeyError:
+        pending = ", ".join(p.id for p in gate.pending()) or "none"
+        console.print(f"[red]No proposal {proposal_id} in {path}.[/] Pending: {pending}")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+    console.print(
+        f"[green]approved[/] {proposal.id} · {proposal.symbol} {proposal.side} "
+        f"${proposal.notional:,.2f} by {by}"
+    )
+
+
+@app.command()
+def reject(
+    path: str,
+    proposal_id: str,
+    by: str = typer.Option(..., "--by", help="Approver identity."),
+    reason: str = typer.Option("", help="Rejection reason (recorded in the audit trail)."),
+) -> None:
+    """Reject a pending human decision gate proposal."""
+    from arthaai.execution import ApprovalGate
+
+    gate = ApprovalGate(path)
+    try:
+        proposal = gate.decide(proposal_id, approved=False, by=by, reason=reason)
+    except KeyError:
+        pending = ", ".join(p.id for p in gate.pending()) or "none"
+        console.print(f"[red]No proposal {proposal_id} in {path}.[/] Pending: {pending}")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+    console.print(
+        f"[yellow]rejected[/] {proposal.id} · {proposal.symbol} {proposal.side} by {by}"
+        + (f" · {reason}" if reason else "")
+    )
+
+
 @app.command("paper-sim")
 def paper_sim(
     symbol: str,
@@ -292,11 +422,19 @@ def paper_sim(
     equity: float = typer.Option(100_000, help="Starting paper equity."),
     fraction: float = typer.Option(0.05, help="Allocation fraction per entry (policy cap)."),
     stop_loss: float = typer.Option(0.08, help="Mandatory stop-loss fraction."),
+    slippage_bps: float = typer.Option(0.0, help="Adverse fill slippage in basis points."),
+    participation: float = typer.Option(
+        0.0, help="Max fill as a fraction of bar volume (0 = unlimited)."
+    ),
+    reject_probability: float = typer.Option(
+        0.0, help="Per-order rejection probability in [0, 1]."
+    ),
+    fill_seed: int = typer.Option(0, help="RNG seed for reproducible rejections (0 = unseeded)."),
     audit: str = typer.Option("", help="Append execution events to this JSONL audit log."),
 ) -> None:
     """Bar-by-bar paper simulation that actually fires stop-loss/targets (Tier 4)."""
     from arthaai.db import timescale
-    from arthaai.execution import ExecutionEngine
+    from arthaai.execution import ExecutionEngine, FillModel
     from arthaai.execution.simulate import simulate_symbol
 
     symbol = symbol.upper()
@@ -305,7 +443,15 @@ def paper_sim(
         console.print(f"[red]Not enough data for {symbol}: {len(df)} bars (need > {warmup + 5}).[/]")
         raise typer.Exit(1)
 
-    engine = ExecutionEngine(initial_equity=equity, stop_loss_pct=stop_loss, audit=audit or None)
+    fill_model = FillModel(
+        slippage_bps=slippage_bps,
+        participation_rate=participation or None,
+        reject_probability=reject_probability,
+        seed=fill_seed or None,
+    )
+    engine = ExecutionEngine(
+        initial_equity=equity, stop_loss_pct=stop_loss, audit=audit or None, fill_model=fill_model
+    )
     with console.status(f"[bold]simulating {symbol} ({signal}) bar-by-bar…"):
         res = simulate_symbol(
             symbol, df, warmup=warmup, signal=signal, adx_threshold=adx,
@@ -316,6 +462,8 @@ def paper_sim(
     t.add_column("k"); t.add_column("v", justify="right")
     t.add_row("bars", str(res.bars))
     t.add_row("entries", str(res.entries))
+    t.add_row("partial fills", str(res.partial_fills))
+    t.add_row("rejected orders", str(res.rejected_orders))
     t.add_row("stop-loss hits", str(res.stops_hit))
     t.add_row("target hits", str(res.targets_hit))
     t.add_row("other exits", str(res.exits))
@@ -622,14 +770,70 @@ def eval(
         raise typer.Exit(1)
 
 
+@app.command()
+def portfolio(
+    symbols: str = typer.Option(..., help="Comma-separated symbols for the universe."),
+    limit: int = typer.Option(500, help="Bars per symbol."),
+) -> None:
+    """Covariance-aware portfolio Kelly allocation across a universe (ARTHA-309)."""
+    import pandas as pd
+
+    from arthaai.agents import asset_manager, quant_agent, risk
+    from arthaai.db import timescale
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    quant_map: dict[str, dict] = {}
+    closes: dict[str, pd.Series] = {}
+    with console.status(f"[bold]sizing {len(syms)} assets…"):
+        for sym in syms:
+            stats = quant_agent.run(sym)
+            if not stats.get("available"):
+                continue
+            df = timescale.load_ohlcv(sym, limit=limit)
+            if df.empty:
+                continue
+            quant_map[sym] = stats
+            closes[sym] = df.set_index("ts")["close"].pct_change(fill_method=None)
+    if not quant_map:
+        console.print("[red]No quant stats available — run ingest first.[/]")
+        raise typer.Exit(1)
+
+    returns = pd.DataFrame(closes).dropna(how="all")
+    alloc = asset_manager.portfolio_size(quant_map, returns)
+    t = Table(title="Portfolio Kelly · covariance-aware allocation")
+    t.add_column("Symbol")
+    t.add_column("Standalone", justify="right")
+    t.add_column("Final", justify="right")
+    for sym, fraction in alloc.fractions.items():
+        t.add_row(sym, f"{alloc.standalone_fractions[sym]:.2%}", f"{fraction:.2%}")
+    console.print(t)
+
+    # Historical tail risk of the sized book (ARTHA-310).
+    held = [s for s in alloc.fractions if s in returns.columns]
+    if held:
+        weights = pd.Series({s: alloc.fractions[s] for s in held})
+        book = (returns[held] * weights).sum(axis=1)
+        var95 = risk.historical_var(book, 0.95)
+        es95 = risk.historical_expected_shortfall(book, 0.95)
+        console.print(
+            f"[dim]book tail risk: daily 95% VaR {var95:.2%} · ES {es95:.2%} "
+            f"({len(book)} obs)[/]"
+        )
+    console.print(f"[dim]{alloc.rationale}[/]")
+    console.print("[dim]Decision-support only · paper context · not investment advice.[/]")
+
+
 @app.command(name="factors")
 def factors(
-    action: str = typer.Argument("list", help="list | show | bench"),
+    action: str = typer.Argument("list", help="list | show | bench | composite"),
     alpha_id: str = typer.Option("", help="Alpha ID for 'show' (e.g. alpha101_001)"),
     zoo: str = typer.Option("", help="Filter by zoo: alpha101, gtja191, qlib158"),
     top: int = typer.Option(20, help="Top-K results for bench"),
     symbols: str = typer.Option("GLD,SLV,XOM", help="Symbols for bench (comma-separated)"),
     horizon: int = typer.Option(1, help="Forward-return horizon / IC embargo step for bench"),
+    ic_weighted: bool = typer.Option(
+        False, "--ic-weighted", help="Use the IC-weighted composite for 'composite'."
+    ),
 ) -> None:
     """Alpha Zoo factor engine — list, show, or IC-bench factors (BH FDR)."""
     from arthaai.factors.registry import get_default_registry
@@ -732,8 +936,37 @@ def factors(
             f"{sum(1 for r in results if r.category == 'dead')} dead[/]"
         )
 
+    elif action == "composite":
+        from arthaai.factors.composite import (
+            composite_from_panel,
+            ic_weighted_composite,
+            rank_assets,
+        )
+        from arthaai.factors.panel import build_panel_from_symbols
+
+        syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        panel = build_panel_from_symbols(syms)
+        if not panel:
+            console.print("[red]No OHLCV for the requested symbols — run ingest first.[/]")
+            raise typer.Exit(1)
+        if ic_weighted:
+            comp = ic_weighted_composite(panel, horizon=horizon)
+        else:
+            comp = composite_from_panel(panel)
+        if comp.empty:
+            console.print("[yellow]No factors could be computed for this universe.[/]")
+            raise typer.Exit(1)
+        ranked = rank_assets(comp)
+        t = Table(title=f"Cross-sectional factor composite · {len(syms)} symbols")
+        t.add_column("Rank", justify="right")
+        t.add_column("Symbol")
+        t.add_column("Composite", justify="right")
+        for i, (sym, score) in enumerate(ranked.items(), start=1):
+            t.add_row(str(i), str(sym), f"{score:+.3f}")
+        console.print(t)
+
     else:
-        console.print("[red]Usage: factors list | show | bench[/]")
+        console.print("[red]Usage: factors list | show | bench | composite[/]")
         raise typer.Exit(1)
 
 

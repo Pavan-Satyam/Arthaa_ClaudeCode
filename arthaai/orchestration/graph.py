@@ -5,7 +5,9 @@ Topology (Tier 2 -> Tier 3):
     ingest ─▶ ┌ db_agent ┐
               │ quant     │  (fan-out, async workers)
               │ news      │
-              └ alt      ┘ ─▶ master_llm ─▶ asset_manager ─▶ END
+              │ alt       │
+              │ corr      │
+              └──────────┘ ─▶ master_llm ─▶ asset_manager ─▶ END
 
 The fan-out models the blueprint's Kafka dispatch to decoupled agents; the join
 at master_llm is the State Store convergence. LangGraph runs the workers
@@ -18,7 +20,15 @@ from dataclasses import asdict
 
 from langgraph.graph import END, START, StateGraph
 
-from arthaai.agents import alt_agent, asset_manager, db_agent, master_llm, news_agent, quant_agent
+from arthaai.agents import (
+    alt_agent,
+    asset_manager,
+    correlation_regime,
+    db_agent,
+    master_llm,
+    news_agent,
+    quant_agent,
+)
 from arthaai.data.provider import ingest_resilient
 from arthaai.orchestration.state import GraphState
 
@@ -47,6 +57,10 @@ def _alt(state: GraphState) -> dict:
     return {"alt": alt_agent.run(state["symbol"])}
 
 
+def _correlation(state: GraphState) -> dict:
+    return {"correlation": correlation_regime.run(state["symbol"])}
+
+
 def _master(state: GraphState) -> dict:
     verdict = master_llm.reason(dict(state), state["symbol"])
     return {"verdict": asdict(verdict)}
@@ -66,11 +80,12 @@ def build_graph():
     g.add_node("quant_agent", _quant)
     g.add_node("news_agent", _news)
     g.add_node("alt_agent", _alt)
+    g.add_node("correlation_agent", _correlation)
     g.add_node("master_llm", _master)
     g.add_node("asset_manager", _asset_manager)
 
     g.add_edge(START, "ingest")
-    for worker in ("db_agent", "quant_agent", "news_agent", "alt_agent"):
+    for worker in ("db_agent", "quant_agent", "news_agent", "alt_agent", "correlation_agent"):
         g.add_edge("ingest", worker)          # fan-out
         g.add_edge(worker, "master_llm")      # converge at the State Store / Brain
     g.add_edge("master_llm", "asset_manager")

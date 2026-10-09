@@ -367,9 +367,10 @@ def breakout_signal(
     Because position state matters (you hold until an exit signal), this
     simulates the system forward through the window and returns the position
     held at the most recent bar. `breakout_positions` computes the full series
-    efficiently; this wraps it for the per-bar call pattern of a future live
-    signal-selector. Not yet wired into the live pipeline — the backtest uses
-    `breakout_positions` directly and live `analyze` uses `trend_signal`.
+    efficiently; this wraps it for the per-bar call pattern of the live
+    signal-selector. It is called by `db_agent` when ADX ≥ 25 (trending regime);
+    otherwise the live selector uses `trend_signal`. The backtest uses
+    `breakout_positions` directly.
 
     Returns (label, score in {-1, 0, 1}).
     """

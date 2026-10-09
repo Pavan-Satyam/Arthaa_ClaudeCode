@@ -24,6 +24,8 @@ from enum import Enum
 
 import pandas as pd
 
+from arthaai.execution.fills import FillModel
+
 
 class PositionState(str, Enum):
     FLAT = "flat"
@@ -47,6 +49,7 @@ class Fill:
     quantity: float
     price: float
     slippage_bps: float = 0.0
+    reason: str = ""
 
     def notional(self) -> float:
         return self.quantity * self.price
@@ -76,6 +79,8 @@ class Position:
         self.stop_price = stop_price
         self.target_price = target_price
         self.unrealized_pnl = 0.0
+        self.exit_price = None
+        self.exit_ts = None
 
     def close(self, fill: Fill) -> None:
         if self.state not in (PositionState.OPEN, PositionState.EXITING):
@@ -99,12 +104,12 @@ class Position:
         if self.stop_price is not None and low <= self.stop_price:
             self.state = PositionState.EXITING
             return Fill(ts=ts, symbol=self.symbol, side="sell",
-                        quantity=self.quantity, price=self.stop_price)
+                        quantity=self.quantity, price=self.stop_price, reason="stop_loss")
 
         if self.target_price is not None and high >= self.target_price:
             self.state = PositionState.EXITING
             return Fill(ts=ts, symbol=self.symbol, side="sell",
-                        quantity=self.quantity, price=self.target_price)
+                        quantity=self.quantity, price=self.target_price, reason="target")
 
         return None
 
@@ -119,6 +124,7 @@ class Portfolio:
     drawdown_lookback: int = 5
     drawdown_trigger: float = 0.10
     max_consecutive_trips: int = 2
+    fill_model: FillModel | None = None
 
     _equity_curve: list[float] = field(default_factory=list)
     _peak_equity: float = 100_000.0
@@ -217,7 +223,13 @@ class Portfolio:
             if pos.state != PositionState.OPEN:
                 continue
             price = prices.get(sym) or pos.entry_price
-            fill = Fill(ts=ts, symbol=sym, side="sell", quantity=pos.quantity, price=price)
+            if self.fill_model is not None:
+                price = self.fill_model.exit_price("sell", price)
+            fill = Fill(
+                ts=ts, symbol=sym, side="sell", quantity=pos.quantity, price=price,
+                slippage_bps=self.fill_model.slippage_bps if self.fill_model else 0.0,
+                reason="kill_switch",
+            )
             pos.close(fill)
             self.add_proceeds(fill.notional())
             fills[sym] = fill
@@ -229,6 +241,9 @@ class Portfolio:
         for sym, pos in self.positions.items():
             fill = pos.step(bar)
             if fill is not None:
+                if self.fill_model is not None:
+                    fill.price = self.fill_model.exit_price(fill.side, fill.price)
+                    fill.slippage_bps = self.fill_model.slippage_bps
                 pos.close(fill)
                 fills[sym] = fill
             else:
