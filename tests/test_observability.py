@@ -1,9 +1,18 @@
-"""Observability — Prometheus metrics and OpenTelemetry tracing (ARTHA-507/508)."""
+"""Observability — Prometheus metrics and OpenTelemetry tracing (ARTHA-507/508).
 
-from fastapi.testclient import TestClient
+These cover the optional `obs` extra, so they skip when it is not installed
+(the gateway and app code still import cleanly and degrade to no-ops).
+"""
 
-from arthaai.gateway.app import app
-from arthaai.observability import metrics, tracing
+import pytest
+
+pytest.importorskip("prometheus_client")
+pytest.importorskip("opentelemetry.sdk")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from arthaai.gateway.app import app  # noqa: E402
+from arthaai.observability import metrics, tracing  # noqa: E402
 
 
 class TestMetrics:
