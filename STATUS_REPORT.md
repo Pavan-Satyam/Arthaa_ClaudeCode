@@ -20,8 +20,8 @@ and the failure now exposes a **criterion mismatch** for cross-sectional signals
 ## 0. Next session — start here
 
 **State (2026-10-04, end of session):**
-- Branch `feat/arthaai-core`; backlog work committed & pushed as `92727b4`; the follow-up **§14 P0/P2/P3 pass is uncommitted** on the working tree.
-- Last full run: **353 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean.
+- Branch `feat/arthaai-core` — **all work committed and pushed** to `origin/feat/arthaai-core` (HEAD `af8bc89`); working tree clean, 0 ahead / 0 behind.
+- Last full run: **353 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean. GitHub CI wired to install `.[dev,obs,auth]`.
 - Docker stack was up (TimescaleDB/Qdrant/OPA/Vault/Redpanda); `LSE_API_KEY` present in `.env`. OHLCV loaded for ~45 symbols.
 
 **Completed this session:** all 11 independent backlog tickets + ARTHA-309/311 (fill simulation, VaR/ES, human approval gate, correlation-regime agent, cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus, mTLS fail-closed, real-IdP JWT test, portfolio + dynamic Kelly), a full `/review uncommitted` pass whose **10 findings are all fixed**, and the §14 follow-ups **#1 (commit+push), #4 (live stop enforcement via ledger + `mark`), #5 (`promote-sweep` + `/promotions` endpoint), #6 (portfolio exposure guard + VaR/ES in `execute`), #8 (config-driven news feeds), #9 (alerts + LLM call tracking)**.
@@ -126,7 +126,7 @@ because the release gate is gated on E3, and E3 is a research result, not a chec
 | Python source files | ~58 (excl. generated zoo) |
 | Test files | 34 |
 | Tests passing (DB-independent) | **353** (+1 deselected `health`) |
-| CLI commands | 23 |
+| CLI commands | 25 |
 | Registered factor alphas | **445** (alpha101 101, gtja191 190, qlib158 154) |
 | DB symbols with OHLCV | ~50 (widened LSE cross-section for E3) |
 | Quality gates | `compileall` clean · correctness lint clean · CI workflow defined |
@@ -170,6 +170,8 @@ Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss
   | `GET` | `/health` | none (pings TimescaleDB extension) |
   | `GET` | `/ohlcv/{symbol}` | bearer/cookie auth · rate limit 60/min |
   | `POST` | `/analyze/{symbol}` | bearer/cookie auth · rate limit 10/min |
+  | `GET` | `/metrics` | bearer/cookie auth · mTLS (optional `obs` extra; 503 if absent) |
+  | `GET` | `/promotions` | bearer/cookie auth · mTLS (qualified symbols from the promotion gate) |
 
 - **Rate limiting** (`slowapi`) keyed by `client_key` — a SHA-256 **hash of the bearer
   token** (header or cookie), falling back to client IP. Keying on the credential means
@@ -522,7 +524,7 @@ the existing B&H gate.
    (by design); they require a universe panel (now supplied by `factors/composite.py`).
 6. **JWT verified against a local IdP, not production** — `tests/test_oauth_jwt.py` exercises
    the full signature path against a generated JWKS server; wiring a real IdP is config.
-7. **CI never run on GitHub**; work is **uncommitted** on the working tree.
+7. **CI now runs on GitHub** (workflow installs `.[dev,obs,auth]`; observability tests skip when the `obs` extra is absent). All work is committed and pushed on `feat/arthaai-core`.
 8. **qdrant client/server version mismatch** and **Vault 404s** — cosmetic, as before.
 9. `test_health` pings TimescaleDB; excluded from normal runs and CI.
 
@@ -547,12 +549,13 @@ the existing B&H gate.
 | `test_policy.py` | OPA allow/deny |
 | `test_migrate.py` / `test_daily_bars.py` | SQL splitter, schema contents · daily-bar canonicalisation/de-dup |
 | `test_execution_fills.py` | Fill model: slippage, partial fills, seeded rejection, engine wiring |
-| `test_risk.py` | Historical/parametric VaR, Expected Shortfall, stress test, sizing report |
+| `test_risk.py` | Historical/parametric VaR, Expected Shortfall, sizing report |
 | `test_portfolio_kelly.py` | Covariance de-risk, exposure cap, dynamic Kelly fraction bounds |
 | `test_approval.py` / `test_mtls.py` | Human gate propose/approve/reject + persistence · mTLS fail-closed |
 | `test_composite.py` | Cross-sectional z-score, composite, ranking, IC-weighted (embargo, fallback) |
-| `test_correlation_regime.py` / `test_news_feed.py` | Correlation regime labels · RSS/Atom parse, sentiment, upsert |
-| `test_observability.py` / `test_oauth_jwt.py` | Prometheus/OTel + `/metrics` · real-IdP JWT via local JWKS server |
+| `test_correlation_regime.py` / `test_news_feed.py` | Correlation regime labels · RSS/Atom parse, sentiment, SSRF guard, upsert |
+| `test_observability.py` / `test_oauth_jwt.py` | Prometheus/OTel + `/metrics` · real-IdP JWT via local JWKS server (skip without extras) |
+| `test_ledger.py` | Position ledger replay · live stop/target firing · `mark` CLI · exposure guard |
 
 ---
 
@@ -607,7 +610,7 @@ the existing B&H gate.
    (b) add a separate, documented **market-neutral** criterion — *not* by weakening the B&H
    gate. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue). *(no dependency)*
 2. **Factor-gate default** — set `factor_gate=False` unless/until E3 proves the signal. *(depends on 1)*
-3. **Commit + push** — ✅ done this pass (`92727b4` pushed to `origin/feat/arthaai-core`); re-commit the follow-up work.
+3. **Commit + push** — ✅ done: `92727b4` (backlog), `d8a0306` (follow-ups), `af8bc89` (CI extras) all pushed to `origin/feat/arthaai-core`.
 
 **Completed this pass (was on the list)**
 4. ✅ **Live stop enforcement** — `execute --ledger` + `arthaai mark` fire stops/targets in the live path.
@@ -627,6 +630,10 @@ the existing B&H gate.
 
 | Commit | Description |
 |--------|-------------|
+| `af8bc89` | ci: install obs+auth extras; skip observability tests without extras |
+| `d8a0306` | feat: live stop ledger + mark, promote-sweep, exposure guard, news feeds, alerts |
+| `92727b4` | feat: fill sim, tail risk, portfolio/dynamic Kelly, composite, observability, human gate |
+| `2ae43ef` | feat: provider-chain wiring, Tier 4 execution, promotion gate, factor engine |
 | `4e830d0` | docs: rebuild project board from independent code verification |
 | `fa6ac07` | docs: refresh status report summary, commit history, TOC |
 | `88c3f22` | Complete architecture status report + CLI/schema/DB refactor |
@@ -638,11 +645,10 @@ the existing B&H gate.
 | `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
 | `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
 
-> **Uncommitted:** the entire Phase 0–3 + A–D body of work, the **2026-10-04 backlog
-> session** (13 tickets: fill sim, VaR/ES, human gate, correlation regime, composite +
-> IC-weighted composite, live news, OTel, Prometheus, mTLS, IdP JWT test, portfolio +
-> dynamic Kelly), the `/review uncommitted` fix pass, the widened LSE universe, and this
-> report revision — **20 modified, 20 new files**. Nothing above is pushed beyond `4e830d0`.
+> **All committed and pushed.** The Phase 0–3 + A–D body of work, the **2026-10-04 backlog
+> session** (13 tickets), the `/review uncommitted` fix pass, the §14 follow-ups, the widened
+> LSE universe, and this report revision are all on `origin/feat/arthaai-core` (HEAD `af8bc89`).
+> Working tree clean, 0 ahead / 0 behind.
 
 ---
 
