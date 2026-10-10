@@ -112,3 +112,36 @@ class TestIngest:
         monkeypatch.setattr(news_feed, "fetch_feed", lambda url, source="": [])
         monkeypatch.setattr(news_feed.qdrant, "upsert_news", lambda docs: len(docs))
         assert news_feed.ingest_news("GLD", ["https://feed"]) == 0
+
+
+class TestIngestNewsCli:
+    def _settings(self, feeds):
+        return type("S", (), {"news_feeds": feeds})()
+
+    def test_uses_configured_feeds(self, monkeypatch):
+        from typer.testing import CliRunner
+
+        import arthaai.config as config
+        from arthaai.cli import app
+
+        monkeypatch.setattr(config, "get_settings", lambda: self._settings("https://feed.example/rss"))
+        captured = {}
+
+        def fake(sym, urls, limit_per_feed=10):
+            captured["sym"], captured["urls"] = sym, urls
+            return 3
+
+        monkeypatch.setattr("arthaai.data.news_feed.ingest_news", fake)
+        result = CliRunner().invoke(app, ["ingest-news", "GLD"])
+        assert result.exit_code == 0
+        assert captured == {"sym": "GLD", "urls": ["https://feed.example/rss"]}
+
+    def test_no_feeds_errors(self, monkeypatch):
+        from typer.testing import CliRunner
+
+        import arthaai.config as config
+        from arthaai.cli import app
+
+        monkeypatch.setattr(config, "get_settings", lambda: self._settings(""))
+        result = CliRunner().invoke(app, ["ingest-news", "GLD"])
+        assert result.exit_code == 1

@@ -76,15 +76,22 @@ def seed_news() -> None:
 @app.command("ingest-news")
 def ingest_news(
     symbol: str,
-    feeds: str = typer.Option(..., help="Comma-separated RSS/Atom feed URLs."),
+    feeds: str = typer.Option(
+        "", help="Comma-separated RSS/Atom feed URLs (defaults to ARTHAAI_NEWS_FEEDS)."
+    ),
     limit: int = typer.Option(10, help="Max items per feed."),
 ) -> None:
     """Pull live RSS/Atom headlines into Qdrant for a symbol (ARTHA-216)."""
+    from arthaai.config import get_settings
     from arthaai.data.news_feed import ingest_news as run_ingest
 
     urls = [u.strip() for u in feeds.split(",") if u.strip()]
     if not urls:
-        console.print("[red]No feed URLs supplied.[/]")
+        urls = [u.strip() for u in get_settings().news_feeds.split(",") if u.strip()]
+    if not urls:
+        console.print(
+            "[red]No feed URLs supplied.[/] Pass --feeds or set ARTHAAI_NEWS_FEEDS."
+        )
         raise typer.Exit(1)
     with console.status(f"[bold]ingesting {len(urls)} feed(s) for {symbol.upper()}…"):
         n = run_ingest(symbol, urls, limit_per_feed=limit)
@@ -271,6 +278,10 @@ def execute(
     proposal_id: str = typer.Option(
         "", help="Approved proposal id to execute (requires --approval)."
     ),
+    ledger: str = typer.Option(
+        "", help="Record the opened position to this ledger (enables `arthaai mark`)."
+    ),
+    force: bool = typer.Option(False, help="Override the portfolio exposure cap."),
 ) -> None:
     """Run the pipeline, then place a PAPER order through Tier 4 guardrails."""
     from arthaai.execution import ApprovalGate, ExecutionEngine, TradingHalted
@@ -340,6 +351,29 @@ def execute(
         alloc = dict(alloc)
         alloc["final_fraction"] = proposal.final_fraction
 
+    # Portfolio-level exposure guard (ARTHA-309): cap total live exposure across
+    # the ledger's open positions plus this new order.
+    from arthaai.config import get_settings
+
+    existing_notional = 0.0
+    if ledger:
+        from arthaai.execution import PositionLedger
+
+        existing_notional = sum(
+            p.quantity * p.entry_price for p in PositionLedger(ledger).open_positions()
+        )
+    new_notional = round(equity * float(alloc.get("final_fraction", 0.0)), 2)
+    cap = get_settings().max_portfolio_exposure
+    projected = (existing_notional + new_notional) / equity if equity else 0.0
+    if projected > cap + 1e-9 and not force:
+        console.print(Panel(
+            f"projected portfolio exposure {projected:.1%} would exceed the cap of "
+            f"{cap:.0%} (open ${existing_notional:,.0f} + new ${new_notional:,.0f} "
+            f"on ${equity:,.0f}).\nRe-run with --force to override.",
+            title="Tier 3 · portfolio exposure cap", border_style="red",
+        ))
+        raise typer.Exit(1)
+
     try:
         order = engine.submit(symbol, alloc, last_price, direction)
     except TradingHalted as exc:
@@ -349,11 +383,32 @@ def execute(
     if approval:
         gate.mark_executed(proposal_id)
 
+    if ledger:
+        from arthaai.execution import PositionLedger, PositionState
+
+        pos = engine.portfolio.positions.get(symbol)
+        if pos is not None and pos.state == PositionState.OPEN:
+            PositionLedger(ledger).open(
+                symbol=symbol, side=order.side, quantity=pos.quantity,
+                entry_price=pos.entry_price, stop_price=pos.stop_price,
+                target_price=pos.target_price,
+            )
+            console.print(f"[dim]position recorded to ledger {ledger} — monitor with "
+                          f"`arthaai mark {ledger}`.[/]")
+
+    risk_line = ""
+    if alloc.get("var_95") is not None:
+        risk_line = (
+            f"\nrisk: 95% VaR {alloc['var_95'] * float(alloc.get('final_fraction', 0)):.2%} · "
+            f"ES {alloc.get('expected_shortfall_95', 0) * float(alloc.get('final_fraction', 0)):.2%} "
+            f"on exposure"
+        )
     console.print(Panel(
         f"[bold]{order.side.upper()}[/] {order.symbol}  ·  notional ${order.notional:,.2f}  "
         f"({alloc['final_fraction']:.2%} of ${equity:,.0f})\n"
         f"stop-loss @ {order.stop_loss}  ·  drawdown breaker [{engine.breaker_state}]  ·  "
-        f"[bold]PAPER[/]",
+        f"[bold]PAPER[/]"
+        + risk_line,
         title="Tier 4 · paper execution", border_style="magenta",
     ))
     if audit:
@@ -410,6 +465,67 @@ def reject(
         f"[yellow]rejected[/] {proposal.id} · {proposal.symbol} {proposal.side} by {by}"
         + (f" · {reason}" if reason else "")
     )
+
+
+@app.command()
+def mark(
+    ledger: str = typer.Argument(..., help="Position ledger written by `execute --ledger`."),
+    price: str = typer.Option(
+        "", help="Optional SYMBOL=PRICE[,SYMBOL=PRICE] overrides (else the latest DB bar)."
+    ),
+    limit: int = typer.Option(1, help="Bars per symbol for the stop check."),
+) -> None:
+    """Step open ledger positions against the latest bar and fire stop/target.
+
+    This is where stop-losses are enforced in the live paper path: `execute`
+    records the position, `mark` evaluates it and closes it when the stop or
+    target is breached (ARTHA-4xx).
+    """
+    import pandas as pd
+
+    from arthaai.db import timescale
+    from arthaai.execution.ledger import PositionLedger, evaluate_exit, unrealized_pnl
+
+    overrides: dict[str, float] = {}
+    for part in price.split(","):
+        if "=" in part:
+            sym, val = part.split("=", 1)
+            overrides[sym.strip().upper()] = float(val)
+
+    led = PositionLedger(ledger)
+    positions = led.open_positions()
+    if not positions:
+        console.print("[dim]No open positions in the ledger.[/]")
+        return
+
+    t = Table(title="Position mark")
+    for col in ("Symbol", "Entry", "Stop", "Last", "uPnL", "Action"):
+        t.add_column(col, justify="right" if col not in ("Symbol", "Action") else "left")
+    for p in positions:
+        if p.symbol in overrides:
+            px = overrides[p.symbol]
+            bar = pd.Series({"ts": pd.Timestamp.now(tz="UTC"), "open": px,
+                             "high": px, "low": px, "close": px})
+            last = px
+        else:
+            df = timescale.load_ohlcv(p.symbol, limit=limit)
+            if df.empty:
+                t.add_row(p.symbol, f"{p.entry_price:.2f}", f"{p.stop_price or 0:.2f}",
+                          "—", "—", "[yellow]no data[/]")
+                continue
+            bar = df.iloc[-1]
+            last = float(bar["close"])
+
+        fill = evaluate_exit(p, bar)
+        pnl = f"{unrealized_pnl(p, last):+,.2f}"
+        if fill is not None:
+            led.close(p.id, exit_price=fill.price, reason=fill.reason)
+            action = f"[red]{fill.reason.upper()}[/]"
+        else:
+            action = "[green]held[/]"
+        t.add_row(p.symbol, f"{p.entry_price:.2f}", f"{p.stop_price or 0:.2f}",
+                  f"{last:.2f}", pnl, action)
+    console.print(t)
 
 
 @app.command("paper-sim")
@@ -476,6 +592,43 @@ def paper_sim(
     console.print("[dim]Simulated orders only — no broker contacted.[/]")
 
 
+def _promote_windows(
+    symbol: str, *, signal: str, warmup: int, limit: int,
+    adx_threshold: float, cost_bps: float, vol_target: float, windows: int,
+):
+    """Evaluate the promotion gate across non-overlapping OOS windows.
+
+    Returns ``(qualified, note, rows, evals)`` or ``None`` when there is not
+    enough history. Shared by `promote` and `promote-sweep`.
+    """
+    from arthaai.backtest import oos_windows, run_backtest
+    from arthaai.backtest.promotion import combine_windows, evaluate_promotion
+    from arthaai.db import timescale
+
+    df = timescale.load_ohlcv(symbol, limit=limit)
+    if len(df) < warmup + 10:
+        return None
+    wins = oos_windows(len(df), oos_pct=0.30, count=windows, min_bars=warmup + 10)
+    if not wins:
+        return None
+    rows, evals = [], []
+    for lo, hi in wins:
+        res = run_backtest(
+            symbol, warmup=warmup, limit=limit, signal=signal,
+            adx_threshold=adx_threshold, data_slice=slice(lo, hi),
+            cost_bps=cost_bps, vol_target=vol_target,
+        )
+        ev = evaluate_promotion(
+            oos_sharpe=res.sharpe, oos_max_drawdown=res.max_drawdown,
+            oos_total_return=res.total_return, buy_hold_return=res.buy_hold_return,
+            oos_long_only_return=res.long_only_return,
+        )
+        rows.append((lo, hi, res, ev))
+        evals.append(ev)
+    qualified, note = combine_windows(evals)
+    return qualified, note, rows, evals
+
+
 @app.command()
 def promote(
     symbol: str,
@@ -499,49 +652,25 @@ def promote(
     The B&H test is exposure-matched: comparing the Kelly-sized return (~1-5%
     exposure) to a 100%-invested benchmark is unwinnable by construction.
     """
-    from arthaai.backtest import oos_windows, run_backtest
-    from arthaai.backtest.promotion import (
-        MAX_DD,
-        MIN_SHARPE,
-        combine_windows,
-        evaluate_promotion,
-    )
+    from arthaai.backtest.promotion import MAX_DD, MIN_SHARPE
     from arthaai.db import timescale
 
     symbol = symbol.upper()
     adx_threshold = adx if signal == "breakout" else 0.0
 
-    df = timescale.load_ohlcv(symbol, limit=limit)
-    if len(df) < warmup + 10:
-        console.print(f"[red]Not enough data: {len(df)} bars (need > {warmup + 10}).[/]")
-        raise typer.Exit(1)
-
-    wins = oos_windows(len(df), oos_pct=0.30, count=windows, min_bars=warmup + 10)
-    if not wins:
-        console.print("[red]Not enough bars for the requested OOS windows.[/]")
-        raise typer.Exit(1)
-
-    console.print(f"[bold]Promotion · {symbol} · {signal} · {len(wins)} OOS window(s)[/]")
-    rows = []
-    evals = []
-    for lo, hi in wins:
-        with console.status(f"[bold]OOS backtest bars {lo}–{hi}…"):
-            res = run_backtest(
-                symbol, warmup=warmup, limit=limit, signal=signal,
-                adx_threshold=adx_threshold, data_slice=slice(lo, hi),
-                cost_bps=cost_bps, vol_target=vol_target,
-            )
-        ev = evaluate_promotion(
-            oos_sharpe=res.sharpe,
-            oos_max_drawdown=res.max_drawdown,
-            oos_total_return=res.total_return,
-            buy_hold_return=res.buy_hold_return,
-            oos_long_only_return=res.long_only_return,
+    with console.status(f"[bold]promoting {symbol} · {signal}…"):
+        result = _promote_windows(
+            symbol, signal=signal, warmup=warmup, limit=limit,
+            adx_threshold=adx_threshold, cost_bps=cost_bps,
+            vol_target=vol_target, windows=windows,
         )
-        rows.append((lo, hi, res, ev))
-        evals.append(ev)
-
-    qualified, note = combine_windows(evals)
+    if result is None:
+        console.print(
+            f"[red]Not enough data / OOS windows for {symbol} "
+            f"(need > {warmup + 10} bars).[/]"
+        )
+        raise typer.Exit(1)
+    qualified, note, rows, evals = result
 
     t = Table(title=f"Promotion · {symbol} · {signal}", show_header=True, header_style="bold")
     t.add_column("Window", justify="right"); t.add_column("Sharpe", justify="right")
@@ -591,6 +720,67 @@ def promote(
                 "[dim]Run `arthaai migrate` to apply the schema "
                 "(and `docker compose up -d` if the stack is down).[/]"
             )
+
+
+@app.command("promote-sweep")
+def promote_sweep(
+    symbols: str = typer.Option(
+        "GLD,SLV,USO,XOM,AAPL,DBC,TSLA", help="Comma-separated universe to sweep."
+    ),
+    signal: str = typer.Option("trend", help="trend | breakout"),
+    warmup: int = 60,
+    limit: int = 520,
+    adx: float = typer.Option(25.0, help="ADX gate for breakout."),
+    cost_bps: float = typer.Option(10.0, help="Round-trip friction (bps) charged on turnover."),
+    vol_target: float = typer.Option(0.0, help="Annualised volatility target (0 = off)."),
+    windows: int = typer.Option(2, help="Non-overlapping OOS windows; ALL must pass."),
+    save: bool = typer.Option(True, help="Persist each result to the DB."),
+) -> None:
+    """Sweep the promotion gate across a universe and list every qualified symbol."""
+    from arthaai.db import timescale
+
+    adx_threshold = adx if signal == "breakout" else 0.0
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+
+    t = Table(title=f"Promotion sweep · {signal} · {len(syms)} symbols")
+    for col in ("Symbol", "Windows", "Sharpe", "Long-only", "B&H", "Verdict"):
+        t.add_column(col, justify="right" if col not in ("Symbol", "Verdict") else "left")
+
+    qualified_symbols: list[str] = []
+    for sym in syms:
+        with console.status(f"[bold]promoting {sym}…"):
+            result = _promote_windows(
+                sym, signal=signal, warmup=warmup, limit=limit,
+                adx_threshold=adx_threshold, cost_bps=cost_bps,
+                vol_target=vol_target, windows=windows,
+            )
+        if result is None:
+            t.add_row(sym, "—", "—", "—", "—", "[yellow]no data[/]")
+            continue
+        qualified, _note, rows, evals = result
+        passes = sum(1 for e in evals if e.qualified)
+        res = rows[-1][2]
+        if qualified:
+            qualified_symbols.append(sym)
+        t.add_row(
+            sym, f"{passes}/{len(evals)}", f"{res.sharpe:.2f}",
+            f"{res.long_only_return:+.2%}", f"{res.buy_hold_return:+.2%}",
+            "[green]QUALIFIED[/]" if qualified else "[red]REJECTED[/]",
+        )
+        if save:
+            try:
+                timescale.upsert_signal_promotion(
+                    symbol=sym, signal=signal, qualified=qualified, sharpe=res.sharpe,
+                    max_drawdown=res.max_drawdown, oos_return=res.total_return,
+                    buy_hold_return=res.buy_hold_return,
+                )
+            except Exception:  # noqa: BLE001 - DB may be down; the sweep still reports
+                pass
+
+    console.print(t)
+    console.print(
+        f"[bold]{len(qualified_symbols)}[/] qualified: {qualified_symbols or 'none'}"
+    )
 
 
 @app.command()

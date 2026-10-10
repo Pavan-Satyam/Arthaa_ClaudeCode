@@ -51,3 +51,31 @@ class TestGatewayInstrumentation:
         cookie = client.get("/").cookies.get("arthaai_token")
         resp = client.get("/metrics", cookies={"arthaai_token": cookie})
         assert b"arthaai_http_requests_total" in resp.content
+
+
+class TestAlerts:
+    def test_alert_logs_and_counts(self):
+        from arthaai.observability import alerts
+
+        alerts.alert("unit_test", "something happened", dependency="x")
+        payload, _ = metrics.render()
+        assert b"arthaai_alerts_total" in payload
+
+    def test_breaker_failure_raises_alert(self):
+        from arthaai.resiliency.breaker import guarded
+
+        def boom():
+            raise RuntimeError("down")
+
+        assert guarded("unit_dep", boom, lambda: "fallback") == "fallback"
+        payload, _ = metrics.render()
+        assert b"arthaai_alerts_total" in payload
+
+
+class TestLlmCallTracking:
+    def test_reason_counts_provider_calls(self):
+        from arthaai.agents import master_llm
+
+        master_llm.reason({"db": {"last_close": 100.0}}, "GLD")
+        payload, _ = metrics.render()
+        assert b"arthaai_llm_calls_total" in payload

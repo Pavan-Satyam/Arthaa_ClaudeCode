@@ -20,17 +20,17 @@ and the failure now exposes a **criterion mismatch** for cross-sectional signals
 ## 0. Next session — start here
 
 **State (2026-10-04, end of session):**
-- Branch `feat/arthaai-core`; **all work uncommitted** — **20 modified, 20 new files**. Nothing pushed beyond `4e830d0`.
-- Last full run: **335 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean.
+- Branch `feat/arthaai-core`; backlog work committed & pushed as `92727b4`; the follow-up **§14 P0/P2/P3 pass is uncommitted** on the working tree.
+- Last full run: **353 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean.
 - Docker stack was up (TimescaleDB/Qdrant/OPA/Vault/Redpanda); `LSE_API_KEY` present in `.env`. OHLCV loaded for ~45 symbols.
 
-**Completed this session:** all 11 independent backlog tickets + ARTHA-309/311 (fill simulation, VaR/ES, human approval gate, correlation-regime agent, cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus, mTLS fail-closed, real-IdP JWT test, portfolio + dynamic Kelly), then a full `/review uncommitted` pass whose **10 findings are all fixed** (human-gate binding, re-entry bug, mTLS trusted-proxy, `/metrics` auth, metric cardinality, SSRF guard, `portfolio_size` unification, approval caching, z-score dedup, dead-code removal).
+**Completed this session:** all 11 independent backlog tickets + ARTHA-309/311 (fill simulation, VaR/ES, human approval gate, correlation-regime agent, cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus, mTLS fail-closed, real-IdP JWT test, portfolio + dynamic Kelly), a full `/review uncommitted` pass whose **10 findings are all fixed**, and the §14 follow-ups **#1 (commit+push), #4 (live stop enforcement via ledger + `mark`), #5 (`promote-sweep` + `/promotions` endpoint), #6 (portfolio exposure guard + VaR/ES in `execute`), #8 (config-driven news feeds), #9 (alerts + LLM call tracking)**.
 
 **Immediate next steps (in order):**
-1. **Commit + push.** Nothing is committed; note the earlier `origin/feat/arthaai-core` **403** (account lacks write access) — the commit is still local.
 2. **E3 decision (the only release blocker).** Four signal families and a widened 45-asset cross-section all fail the promotion gate ([§8.3](#83-e3--the-edge-gate--fails)); the gate also mismatches cross-sectional signals ([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)). Choose **(a)** accept no promotable edge (Law 3 holds), or **(b)** add a *separate, documented* market-neutral evaluation criterion. **Do not weaken the existing B&H gate.**
-3. **Decide the factor-gate default** — set `factor_gate=False` unless/until E3 proves the factor signal.
-4. **Optional wiring** (built but not in the live path): composite → live sizing; portfolio Kelly/VaR → live `execute`; real news feeds into Qdrant.
+3. **Decide the factor-gate default** — set `factor_gate=False` unless/until E3 proves the factor signal. *(depends on #2)*
+7. **Composite → live sizing** — only if #2 shows a promotable edge (Law 3). *(depends on #2)*
+10. **Broker adapter + Pine/MQL5/TDX exporters** — only after E3 passes. *(depends on #2 + #4)*
 
 **Commands to resume:**
 ```powershell
@@ -39,11 +39,13 @@ $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli migrate
 $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m pytest tests/ -q -k "not health"
 # reproduce the E3 gate (Expect REJECTED):
 $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli promote GLD --signal breakout --cost-bps 10
+# universe sweep of the promotion gate:
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli promote-sweep --signal breakout
 # composite / IC-weighted ranking over the universe:
 $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli factors composite --symbols GLD,SLV,USO,XOM,AAPL --ic-weighted
 ```
 
-**Known open items / caveats:** the human-gate fix binds symbol/side/fraction and is one-shot, but the executed stop is engine-derived (no price-drift tolerance). Live `execute` still uses the no-op fill model and single-order stop. `PROJECT_BOARD.md` is stale relative to this report.
+**Known open items / caveats:** the human-gate fix binds symbol/side/fraction and is one-shot, but the executed stop is engine-derived (no price-drift tolerance). `execute` enforces the portfolio exposure cap but the ledger is a flat file (no atomic multi-writer). `PROJECT_BOARD.md` is stale relative to this report.
 
 ---
 
@@ -123,7 +125,7 @@ because the release gate is gated on E3, and E3 is a research result, not a chec
 |---|---|
 | Python source files | ~58 (excl. generated zoo) |
 | Test files | 34 |
-| Tests passing (DB-independent) | **335** (+1 deselected `health`) |
+| Tests passing (DB-independent) | **353** (+1 deselected `health`) |
 | CLI commands | 23 |
 | Registered factor alphas | **445** (alpha101 101, gtja191 190, qlib158 154) |
 | DB symbols with OHLCV | ~50 (widened LSE cross-section for E3) |
@@ -378,6 +380,13 @@ proposal/decision workflow (`ApprovalGate`, `Proposal`). `arthaai execute` only 
 order once a proposal is approved; `arthaai approve` / `arthaai reject` are separate acts.
 Proposal and decision both land in the audit log.
 
+**Position ledger + live stop enforcement (`execution/ledger.py`, ARTHA-4xx)** — `execute
+--ledger` records each opened position to an append-only JSONL ledger; `arthaai mark`
+steps open positions against the latest bar and fires the stop/target via the canonical
+`Position.step` state machine, so stops are enforced in the live paper path (not only in
+`paper-sim`). `execute` also enforces the portfolio exposure cap from the ledger's open
+notional.
+
 **Audit log (`execution/audit.py`, 59 lines)** — append-only JSONL (`AuditLog` +
 `read_audit`); engine records orders, fills (with `stop_loss`/`target`/`signal` reason),
 breaker trips, kill switch, unlock. Opt-in, so tests never write files.
@@ -487,7 +496,7 @@ the existing B&H gate.
 | **Resiliency** (`resiliency/breaker.py`, 44) | `pybreaker` per service; `guarded(name, fn, fallback)` |
 | **CI** (`.github/workflows/ci.yml`) | Q1 `compileall` · Q2 `pytest -k "not health"` · correctness-only lint (zoo excluded) |
 | **Observability** | ✅ OpenTelemetry tracing (`observability/tracing.py`, `ARTHA-507`) + Prometheus metrics (`observability/metrics.py`, `ARTHA-508`); optional `obs` extra; authenticated `/metrics` (same principal/mTLS as data routes) + request middleware that labels only matched route templates; no-op when the extra is absent |
-| **Alerting / cost tracking** | ❌ not implemented |
+| **Alerting / cost tracking** | 🟡 hooks added: `observability/alerts.py` (log + `arthaai_alerts_total`) wired to circuit-breaker trips; `arthaai_llm_calls_total{provider,outcome}` usage tracking in the Master LLM. No external pager/billing integration (deploy infra). |
 
 ---
 
@@ -521,7 +530,7 @@ the existing B&H gate.
 
 ## 11. Test inventory
 
-**335 passed, 1 deselected** (`test_health`, needs Docker) in ~13s.
+**353 passed, 1 deselected** (`test_health`, needs Docker) in ~14s.
 
 | File | Focus |
 |---|---|
@@ -557,15 +566,17 @@ the existing B&H gate.
 | `ingest` / `ingest-lse` | Ingest bars (provider chain / LSE) |
 | `provider-status` | Show/set the stored provider for a symbol |
 | `analyze` | Run the full multi-agent pipeline |
-| `execute` | Place one paper order (`--audit` JSONL); `--approval`/`--proposal-id` enables the human gate |
+| `execute` | Place one paper order (`--audit` JSONL); `--approval`/`--proposal-id` enables the human gate; `--ledger` records for stop monitoring; `--force` overrides the exposure cap |
+| `mark` | Step open ledger positions against the latest bar and fire stop/target (live stop enforcement) |
 | `approve` / `reject` | Approve or reject a pending human-gate proposal (`--by`) |
 | `paper-sim` | Bar-by-bar paper simulation that fires stops/targets (`--slippage-bps`, `--participation`, `--reject-probability`, `--fill-seed`) |
 | `portfolio` | Covariance-aware portfolio Kelly across a universe |
 | `backtest` | Walk-forward backtest (`--signal`, `--adx`, `--cost-bps`, `--vol-target`) |
 | `promote` | OOS promotion gate, multi-window, exposure-matched (`--windows`, `--cost-bps`, `--vol-target`) |
+| `promote-sweep` | Sweep the promotion gate across a universe; list every qualified symbol |
 | `compare` | Compare signals across assets |
-| `factors` | `list` / `show` / `bench` (BH-corrected IC) / `composite` (cross-sectional ranking) |
-| `ingest-news` | Ingest live RSS/Atom headlines into Qdrant for a symbol |
+| `factors` | `list` / `show` / `bench` (BH-corrected IC) / `composite` (`--ic-weighted`) |
+| `ingest-news` | Ingest live RSS/Atom headlines into Qdrant for a symbol (defaults to `ARTHAAI_NEWS_FEEDS`) |
 | `eval` | Golden-fixture LLM eval |
 | `llm-status` | Probe the LLM provider chain |
 | `seed-news` / `seed-secrets` | Seed Qdrant news / Vault secrets |
@@ -591,26 +602,24 @@ the existing B&H gate.
 ## 14. Remaining work
 
 **Blocking the release gate**
-1. **E3** — four signal families (`trend`, `breakout`, equal-weight composite, IC-weighted
-   composite) and a widened 45-asset cross-section all fail; there is no promotable
-   directional edge. Decide: (a) accept no edge (Law 3 holds), or (b) add a **separate,
-   documented market-neutral evaluation criterion** for cross-sectional signals — *not* by
-   weakening the existing B&H gate. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
-2. **Decide the factor-gate default** — flip to off unless E3 proves the factor signal.
-3. **Commit + push**, and let the CI workflow run.
+1. **E3 decision** — four signal families and a widened 45-asset cross-section all fail;
+   no promotable directional edge exists. Decide: (a) accept no edge (Law 3 holds), or
+   (b) add a separate, documented **market-neutral** criterion — *not* by weakening the B&H
+   gate. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue). *(no dependency)*
+2. **Factor-gate default** — set `factor_gate=False` unless/until E3 proves the signal. *(depends on 1)*
+3. **Commit + push** — ✅ done this pass (`92727b4` pushed to `origin/feat/arthaai-core`); re-commit the follow-up work.
 
-**High value, low risk**
-4. Wire stop-losses into the live `execute` path (`paper-sim` already fires them).
-5. Expose `signal_promotion` in the gateway/UI; add a `promote --all` sweep.
+**Completed this pass (was on the list)**
+4. ✅ **Live stop enforcement** — `execute --ledger` + `arthaai mark` fire stops/targets in the live path.
+5. ✅ **`promote-sweep`** CLI + authenticated gateway **`/promotions`** endpoint.
+6. ✅ **Portfolio exposure guard + VaR/ES** surfaced in the live `execute` path.
+7. ✅ **Composite → live sizing** is now *wired into the backtest* (`run_backtest(signal_series=...)`) and rankable via `factors composite --ic-weighted`; live-sizing wiring still pending E3.
+8. ✅ **Config-driven news feeds** (`ARTHAAI_NEWS_FEEDS`, `news_auto_ingest`).
+9. ✅ **Alerting hooks** (`observability/alerts.py`) + **LLM call tracking** (`arthaai_llm_calls_total`).
 
-**Built this session, not yet wired into the live path**
-6. Cross-sectional / IC-weighted composite → live sizing (`ARTHA-219`).
-7. Portfolio Kelly + VaR/ES → live `execute` (`ARTHA-309/310`).
-
-**Deferred / open**
-8. Configure live news feeds for Qdrant (`ARTHA-216` ingestion is built; feeds not set).
-9. Alerting + cost tracking.
-10. Real broker adapter + Pine/MQL5/TDX exporters — only after E3 passes (Law 3).
+**Remaining (gated on the E3 decision)**
+10. **Composite → live sizing** — only if E3 shows a promotable edge (Law 3). *(depends on 1)*
+11. **Broker adapter + Pine/MQL5/TDX exporters** — after E3 passes and live stops exist. *(depends on 1 + 4)*
 
 ---
 

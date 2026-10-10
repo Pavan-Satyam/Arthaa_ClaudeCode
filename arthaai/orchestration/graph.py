@@ -38,7 +38,26 @@ def _ingest(state: GraphState) -> dict:
     if state.get("skip_ingest"):
         return {}
     ingest_resilient(state["symbol"])
+    _refresh_news(state["symbol"])
     return {}
+
+
+def _refresh_news(symbol: str) -> None:
+    """Opt-in live-news refresh (ARTHA-216); network failure must not break analyze."""
+    from arthaai.config import get_settings
+
+    settings = get_settings()
+    if not getattr(settings, "news_auto_ingest", False):
+        return
+    feeds = [u.strip() for u in getattr(settings, "news_feeds", "").split(",") if u.strip()]
+    if not feeds:
+        return
+    from arthaai.data.news_feed import ingest_news
+
+    try:
+        ingest_news(symbol, feeds)
+    except Exception:  # noqa: BLE001 - news is best-effort
+        pass
 
 
 def _db(state: GraphState) -> dict:

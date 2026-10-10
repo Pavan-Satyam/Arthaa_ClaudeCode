@@ -86,6 +86,18 @@ def metrics_endpoint(
     return Response(content=payload, media_type=content_type)
 
 
+@app.get("/promotions")
+def promotions(
+    signal: str = "trend",
+    principal: Principal = Depends(require_principal),
+    _mtls: None = Depends(require_mtls),
+) -> dict:
+    """Qualified symbols from the OOS promotion gate (read-only, authenticated)."""
+    from arthaai.db import timescale
+
+    return {"signal": signal, "qualified": timescale.list_qualified_symbols(signal)}
+
+
 class AnalyzeResponse(BaseModel):
     symbol: str
     verdict: dict

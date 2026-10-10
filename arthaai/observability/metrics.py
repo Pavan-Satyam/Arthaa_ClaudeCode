@@ -52,12 +52,18 @@ if _AVAILABLE:
     LLM_PROVIDER = Counter(
         "arthaai_llm_provider_total", "LLM verdicts by provider.", ["provider"]
     )
+    LLM_CALLS = Counter(
+        "arthaai_llm_calls_total", "LLM provider calls by outcome.", ["provider", "outcome"]
+    )
+    ALERTS = Counter("arthaai_alerts_total", "Alerts raised by kind.", ["kind"])
 else:  # pragma: no cover - exercised only without the extra installed
     HTTP_REQUESTS = _NoopMetric()
     HTTP_LATENCY = _NoopMetric()
     ANALYSES = _NoopMetric()
     PIPELINE_LATENCY = _NoopMetric()
     LLM_PROVIDER = _NoopMetric()
+    LLM_CALLS = _NoopMetric()
+    ALERTS = _NoopMetric()
 
 
 def is_available() -> bool:

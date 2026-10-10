@@ -33,6 +33,20 @@ def test_ohlcv_rejects_non_bearer():
     assert resp.status_code == 401
 
 
+def test_promotions_requires_auth():
+    assert client.get("/promotions").status_code == 401
+
+
+def test_promotions_endpoint(monkeypatch):
+    monkeypatch.setattr(
+        "arthaai.db.timescale.list_qualified_symbols", lambda signal="trend": ["GLD", "SLV"]
+    )
+    cookie = client.get("/").cookies.get("arthaai_token")
+    resp = client.get("/promotions", cookies={"arthaai_token": cookie})
+    assert resp.status_code == 200
+    assert resp.json() == {"signal": "trend", "qualified": ["GLD", "SLV"]}
+
+
 def test_dashboard_sets_httponly_cookie():
     resp = client.get("/")
     assert resp.status_code == 200

@@ -220,13 +220,19 @@ def provider_status() -> list[dict]:
 
 def reason(state: dict, symbol: str) -> Verdict:
     authorize_tool(IDENTITY, "llm_complete")
+    from arthaai.observability import metrics
+
     for name in get_settings().llm_chain_list:
         fn = _PROVIDERS.get(name)
         if fn is None:
             continue
         if name == "offline":
+            metrics.LLM_CALLS.labels("offline", "ok").inc()
             return _offline(state, symbol)
         result = guarded(f"llm:{name}", lambda fn=fn: fn(state, symbol), fallback=lambda: None)
         if result is not None:
+            metrics.LLM_CALLS.labels(name, "ok").inc()
             return result
+        metrics.LLM_CALLS.labels(name, "fallback").inc()
+    metrics.LLM_CALLS.labels("offline", "ok").inc()
     return _offline(state, symbol)

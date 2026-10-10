@@ -38,7 +38,18 @@ def guarded(name: str, fn: Callable[[], T], fallback: Callable[[], T]) -> T:
         return breaker.call(fn)
     except pybreaker.CircuitBreakerError:
         log.warning("circuit_open", dependency=name, action="fallback")
+        _alert("circuit_open", "circuit breaker open; using fallback", dependency=name)
         return fallback()
     except Exception as exc:  # noqa: BLE001 - degrade rather than propagate
         log.warning("dependency_error", dependency=name, error=str(exc), action="fallback")
+        _alert("dependency_error", str(exc), dependency=name)
         return fallback()
+
+
+def _alert(kind: str, message: str, **fields) -> None:
+    try:
+        from arthaai.observability.alerts import alert
+
+        alert(kind, message, **fields)
+    except Exception:  # noqa: BLE001 - alerting is best-effort
+        pass

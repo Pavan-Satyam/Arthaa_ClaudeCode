@@ -106,6 +106,12 @@ class Settings(BaseSettings):
 
     # CORS (ARTHA-509): comma-separated allowed origins. Empty = same-origin only.
     cors_origins: str = ""
+    # Live news feeds (ARTHA-216): comma-separated RSS/Atom URLs. `ingest-news`
+    # falls back to these when no --feeds is given. news_auto_ingest opts the
+    # pipeline into refreshing them during `analyze` (off by default — it hits
+    # the network).
+    news_feeds: str = ""
+    news_auto_ingest: bool = False
 
     # mTLS (ARTHA-110): terminated upstream (API gateway / service mesh), not
     # in-process. When mtls_required is True (and dev_mode is False), requests
