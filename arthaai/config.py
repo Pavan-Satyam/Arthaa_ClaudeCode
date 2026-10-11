@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Literal
 
 from dotenv import load_dotenv
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load .env into the process environment so unprefixed secrets used by third-party
@@ -34,6 +35,18 @@ class Settings(BaseSettings):
     # Kafka / Redpanda
     kafka_bootstrap: str = "localhost:9092"
     ingest_topic: str = "arthaai.ingest.ticks"
+
+    # Market data adapter selection. "auto" preserves the current LSE →
+    # yfinance research fallback; a registered adapter can be selected by name.
+    market_data_provider: str = "auto"
+
+    @field_validator("market_data_provider")
+    @classmethod
+    def normalize_market_data_provider(cls, value: str) -> str:
+        provider = value.strip().lower()
+        if not provider:
+            raise ValueError("market_data_provider must not be empty")
+        return provider
 
     # Zero-trust infra
     opa_url: str = "http://localhost:8181"
@@ -81,9 +94,9 @@ class Settings(BaseSettings):
 
     # Alpha-Zoo factor gate (E2): lets the deterministic factor signal DAMPEN a
     # long when it disagrees with the signal-conditioned Kelly edge. It can only
-    # reduce exposure (never amplify) and never overrides the policy cap. Disable
-    # with ARTHAAI_FACTOR_GATE=false.
-    factor_gate: bool = True
+    # reduce exposure (never amplify) and never overrides the policy cap. Enable
+    # explicitly with ARTHAAI_FACTOR_GATE=true after the factor signal is validated.
+    factor_gate: bool = False
     factor_dampening: float = 0.5   # multiplier when the factor signal conflicts
     factor_epsilon: float = 0.0     # |signal| <= epsilon is treated as neutral
 

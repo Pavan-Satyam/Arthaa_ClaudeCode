@@ -1,6 +1,6 @@
 # ArthaAI — Architecture Status Report
 
-*Last revised: 2026-10-04 · version 0.1.0 · branch `feat/arthaai-core`*
+*Last revised: 2026-10-11 · version 0.1.0 · branch `feat/arthaai-core`*
 
 ArthaAI is a zero-trust multi-agent LLM framework for equities & commodities analysis.
 The deterministic quant layer computes every number; the LLM only synthesises and
@@ -15,6 +15,42 @@ system is **E3** — whether a signal beats buy-and-hold out-of-sample. It still
 and the failure now exposes a **criterion mismatch** for cross-sectional signals
 ([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)).
 
+**2026-10-11 implementation and verification update:** Added `refresh_history()` and
+`refresh_history_batch()` in `arthaai/data/provider.py`, `refresh-history` and `refresh-universe` CLI
+commands, and the read-only `audit-history` workflow for calendar-aware coverage. Refreshed 73
+data-bearing registered US-listed symbols from yfinance (5 over 800 days, 68 over 60 days); audit
+reported 100% recent XNYS session coverage for these 73, while `SILVER` and `XAG` remain without bars.
+The 73-asset cross-sectional diagnostic trailed equal-weight in both tested OOS windows; dry-run
+trend/breakout sweeps found no formal E3 qualifiers. No promotion rows were written and the E3 gate
+was not changed. Detailed source status, replacement seams, and qualification requirements are in
+[DATA_PRODUCTION_READINESS.md](DATA_PRODUCTION_READINESS.md); the board addendum records exact window metrics.
+
+**2026-10-11 provider abstraction update:** Added `OHLCVProvider`, `ProviderRegistry`, and built-in
+LSE/yfinance adapters in `arthaai/data/provider.py`. Existing auto fallback remains LSE-if-configured
+then yfinance; `fetch_ohlcv()`, `ingest_resilient()`, and history refresh APIs now accept an injected
+registry. Custom providers can be registered by trusted host startup using `register_provider()`.
+
+**2026-10-11 configured provider selection update:** Added `ARTHAAI_MARKET_DATA_PROVIDER` to settings
+and `.env.example`; its default `auto` preserves the existing fallback. A configured name must exist
+in the active registry and be available or routing fails clearly. `--provider` remains an invocation-
+level override, and normal ingestion preserves per-symbol pins ahead of the global default. Provider
+status accepts registered names and displays the configured default. Built-in adapters are the only
+ones registered in the shipped host at present; production vendor packaging/registration, per-bar
+lineage, and data qualification remain open. The focused provider/config suite passes (34 tests).
+Final verification: the DB-independent project suite passes **413 tests** with 1 health test deselected;
+provider/config Ruff checks, CLI undefined-name checks, and editor diagnostics pass.
+
+**2026-10-11 OHLCV provenance update:** Added nullable `source_provider`, `retrieved_at`,
+`adjustment_basis`, `provider_symbol`, `provider_timestamp`, and `normalization_version` fields to the
+OHLCV schema and idempotent migration. `timescale.upsert_ohlcv()` persists available provenance and
+updates it on conflict; registry-based and direct LSE/yfinance paths provide source labels, provider
+ticker, source timestamp, adjustment-basis descriptor, and canonical version. The opt-in
+`load_ohlcv(..., include_provenance=True)` exposes all lineage without changing the default consumer
+schema. Applied migration and refreshed GLD over five days; four rows were verified in the database.
+Of 39,212 rows, 39,208 remain NULL/unknown rather than guessed. `provider_symbol` is not a stable vendor
+security ID. Focused provenance/migration/provider tests passed; full suite: 418 passed, 1 health test
+deselected. Provenance lint/editor diagnostics pass. E3 and execution policy are unchanged.
+
 ---
 
 ## 0. Next session — start here
@@ -23,12 +59,13 @@ and the failure now exposes a **criterion mismatch** for cross-sectional signals
 - Branch `feat/arthaai-core` — **all work committed and pushed** to `origin/feat/arthaai-core` (HEAD `af8bc89`); working tree clean, 0 ahead / 0 behind.
 - Last full run: **353 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean. GitHub CI wired to install `.[dev,obs,auth]`.
 - Docker stack was up (TimescaleDB/Qdrant/OPA/Vault/Redpanda); `LSE_API_KEY` present in `.env`. OHLCV loaded for ~45 symbols.
+- **Decision recorded (2026-10-10): hold release.** No market-neutral criterion is approved; E3 remains failed and Law 3 remains in force. The factor-gate default is now off, with explicit `ARTHAAI_FACTOR_GATE=true` opt-in.
 
 **Completed this session:** all 11 independent backlog tickets + ARTHA-309/311 (fill simulation, VaR/ES, human approval gate, correlation-regime agent, cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus, mTLS fail-closed, real-IdP JWT test, portfolio + dynamic Kelly), a full `/review uncommitted` pass whose **10 findings are all fixed**, and the §14 follow-ups **#1 (commit+push), #4 (live stop enforcement via ledger + `mark`), #5 (`promote-sweep` + `/promotions` endpoint), #6 (portfolio exposure guard + VaR/ES in `execute`), #8 (config-driven news feeds), #9 (alerts + LLM call tracking)**.
 
 **Immediate next steps (in order):**
-2. **E3 decision (the only release blocker).** Four signal families and a widened 45-asset cross-section all fail the promotion gate ([§8.3](#83-e3--the-edge-gate--fails)); the gate also mismatches cross-sectional signals ([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)). Choose **(a)** accept no promotable edge (Law 3 holds), or **(b)** add a *separate, documented* market-neutral evaluation criterion. **Do not weaken the existing B&H gate.**
-3. **Decide the factor-gate default** — set `factor_gate=False` unless/until E3 proves the factor signal. *(depends on #2)*
+2. ✅ **E3 decision: hold release.** No signal is currently promotable; no separate market-neutral criterion is approved. Keep the directional B&H gate unchanged and Law 3 in force.
+3. ✅ **Factor-gate default** — `factor_gate=False`; explicit `ARTHAAI_FACTOR_GATE=true` remains available. Focused factor-gate, backtest, and Kelly tests pass.
 7. **Composite → live sizing** — only if #2 shows a promotable edge (Law 3). *(depends on #2)*
 10. **Broker adapter + Pine/MQL5/TDX exporters** — only after E3 passes. *(depends on #2 + #4)*
 
@@ -93,7 +130,7 @@ $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli factors composite -
   that the release criterion and the cross-sectional research direction are misaligned.
 - **E2 is wired** (the factor signal now drives sizing via a dampen-only gate), but the
   evidence says it should stay **off**: it lowered OOS Sharpe on GLD, and the factor
-  signal it consumes has no FDR-significant edge. See [§10](#10-known-issues--defects).
+  signal it consumes has no FDR-significant edge. The default is off pending promotion; explicit opt-in remains available. See [§10](#10-known-issues--defects).
 - **Thirteen open backlog items were completed this session** (ARTHA-221, 409, 310, 308,
   219, 215, 216, 507, 508, 107, 110, plus 309/311): fill simulation (slippage/partial/
   rejection), VaR/Expected-Shortfall, dynamic + portfolio Kelly, correlation-regime agent,
@@ -605,11 +642,11 @@ the existing B&H gate.
 ## 14. Remaining work
 
 **Blocking the release gate**
-1. **E3 decision** — four signal families and a widened 45-asset cross-section all fail;
-   no promotable directional edge exists. Decide: (a) accept no edge (Law 3 holds), or
-   (b) add a separate, documented **market-neutral** criterion — *not* by weakening the B&H
-   gate. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue). *(no dependency)*
-2. **Factor-gate default** — set `factor_gate=False` unless/until E3 proves the signal. *(depends on 1)*
+1. ✅ **E3 decision recorded (2026-10-10): hold release.** No separate market-neutral
+  criterion is approved; no promotable edge exists. Keep the directional B&H gate and
+  Law 3 unchanged. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
+2. ✅ **Factor-gate default** — `factor_gate=False`; explicit `ARTHAAI_FACTOR_GATE=true`
+  opt-in is retained until a factor signal passes promotion.
 3. **Commit + push** — ✅ done: `92727b4` (backlog), `d8a0306` (follow-ups), `af8bc89` (CI extras) all pushed to `origin/feat/arthaai-core`.
 
 **Completed this pass (was on the list)**
@@ -621,8 +658,11 @@ the existing B&H gate.
 9. ✅ **Alerting hooks** (`observability/alerts.py`) + **LLM call tracking** (`arthaai_llm_calls_total`).
 
 **Remaining (gated on the E3 decision)**
-10. **Composite → live sizing** — only if E3 shows a promotable edge (Law 3). *(depends on 1)*
-11. **Broker adapter + Pine/MQL5/TDX exporters** — after E3 passes and live stops exist. *(depends on 1 + 4)*
+10. **Composite → live sizing** — deferred while no signal passes E3 (Law 3). Reopen only
+  after an approved candidate passes promotion; do not wire an unproven signal live.
+11. **Broker adapter + Pine/MQL5/TDX exporters** — deferred until E3 passes and paper
+  stop operations are verified. Broker automation remains distinct from operator-invoked
+  `mark`; exporter work must not imply live approval.
 
 ---
 

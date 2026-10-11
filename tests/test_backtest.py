@@ -58,3 +58,18 @@ def test_signal_series_nonpositive_is_flat(monkeypatch):
     )
     assert res.trades == 0
     assert res.long_only_return == pytest.approx(0.0)
+
+
+def test_composite_signal_uses_factor_series(monkeypatch):
+    df = _ramp_frame()
+    monkeypatch.setattr(engine.timescale, "load_ohlcv", lambda *a, **k: df)
+    import arthaai.agents.quant_agent as qa
+
+    monkeypatch.setattr(
+        qa,
+        "factor_signal_series",
+        lambda symbol, frame, factor_ids=None: pd.Series([-1.0] * len(frame)),
+    )
+    res = engine.run_backtest("GLD", warmup=20, limit=120, signal="composite", factor_gate=False)
+    assert res.trades == 0
+    assert res.long_only_return == pytest.approx(0.0)

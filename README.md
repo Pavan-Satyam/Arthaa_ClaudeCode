@@ -1,5 +1,6 @@
 # ArthaAI
 
+
 Multi-agent LLM framework for analysing equities & commodities — an implementation
 of the [architecture blueprint](arthaai-architecture.html) (open it in a browser, or
 see the published doc). Runs end-to-end on a laptop with free data and no API key.
@@ -9,6 +10,9 @@ see the published doc). Runs end-to-end on a laptop with free data and no API ke
 - [`arthaai-architecture-live.html`](arthaai-architecture-live.html) — the same architecture as an animated, interactive node graph
 - [`AI_ENGINEER_HANDOFF.md`](AI_ENGINEER_HANDOFF.md) — AI/ML handoff: prompts, provider layer, RAG, evaluation, known gaps
 - [`analyze-walkthrough.html`](analyze-walkthrough.html) — non-technical walkthrough for product/ops stakeholders
+- [`PROJECT_BOARD.md`](PROJECT_BOARD.md) — actionable task backlog and release-gate state
+- [`STATUS_REPORT.md`](STATUS_REPORT.md) — implemented code state and verification evidence
+- [`DATA_PRODUCTION_READINESS.md`](DATA_PRODUCTION_READINESS.md) — current data-source state, production replacement seams, qualification, security, and migration evidence
 
 ## What actually runs
 
@@ -49,6 +53,80 @@ arthaai backtest GLD          # walk-forward backtest (look-ahead guarded)
 arthaai seed-secrets          # store dev secrets in Vault
 arthaai serve                 # Tier 1 gateway + UI at http://localhost:8000/
 ```
+
+### Optional global research adapters
+
+The research adapters are opt-in so the base ArthaAI install stays small. On
+Windows, install only the integrations needed for the research workspace:
+
+```powershell
+pip install -e ".[research,market-data,fundamentals,macro,news,openbb,alternatives,execution]"
+pip install -e ".[sentiment]"  # only when local FinBERT inference is needed
+```
+
+They live under `arthaai.data`: `MarketDataFetcher`, `SECDataProcessor`,
+`MacroEconomicsEngine`, `NewsSentimentAnalyzer`, `OpenBBRouter`,
+`AlternativeAssetFetcher`, and `IBORStorageManager`. OLS and Monte Carlo tools
+are in `arthaai.research.RiskSimulationEngine`. Providers load only when called.
+SEC requests require `ARTHAAI_SEC_IDENTITY`; EIA requests require `EIA_API_KEY`;
+FRED can use `FRED_API_KEY`. Never commit credentials.
+
+The operational OHLCV provider default is selected with
+`ARTHAAI_MARKET_DATA_PROVIDER` (`auto` by default, preserving LSE-if-configured
+then yfinance). A named value must match a registered adapter. Built-ins are
+`lse` and `yfinance`; a trusted host integration can implement `OHLCVProvider`
+and call `arthaai.data.provider.register_provider()` during startup before
+selecting that adapter. The CLI and orchestration currently register only the
+built-ins; a future vendor adapter must be installed and explicitly registered
+by trusted host startup. `--provider` on ingest/refresh commands overrides the
+global setting for that invocation, while a stored per-symbol preference takes
+precedence during ordinary `ingest`. Unregistered or unavailable explicit
+providers fail clearly rather than silently routing to a different source.
+
+New OHLCV upserts retain `source_provider`, `retrieved_at`, `adjustment_basis`,
+`provider_symbol`, `provider_timestamp`, and `normalization_version` in TimescaleDB.
+`timescale.load_ohlcv(..., include_provenance=True)` exposes these fields for audits;
+default reads preserve the existing OHLCV frame. `provider_symbol` is currently the
+symbol sent to the provider, not a guaranteed stable vendor ID. Historical bars
+without verified lineage remain NULL and are not retroactively attributed to a guessed provider.
+
+DuckDB is a local analytical store and does not replace operational TimescaleDB.
+OpenBB extensions must be installed and endpoint coverage verified for each
+market. Free feeds are research inputs, not guaranteed production entitlements.
+
+Phase 2 cross-sectional research is available for symbols with stored history:
+
+```powershell
+arthaai research-global --symbols GLD,SLV,USO,XOM,AAPL --limit 520 --cost-bps 10
+```
+
+This is a diagnostic long-only top-quantile study against a daily rebalanced,
+equal-weight portfolio of the same complete-data universe. It is not the formal
+per-symbol E3 promotion benchmark. One missing session may be carried at the last
+close; assets with longer gaps are excluded, and a window is skipped if too few
+assets remain. Global-market claims require broader, point-in-time universe and
+corporate-action-clean history than the current local sample provides.
+
+Before expanding that universe, inspect and repair stored history explicitly:
+
+```powershell
+arthaai audit-history --symbols GLD,SLV,USO,XOM,AAPL --calendar XNYS
+arthaai audit-history --symbols AAPL,VOD.L --calendar-map VOD.L=XLON
+arthaai refresh-history GLD --lookback-days 180 --provider yfinance
+arthaai refresh-universe --symbols GLD,SLV,USO,XOM,AAPL --lookback-days 180 --provider yfinance
+```
+
+The audit is read-only and checks official exchange sessions, gaps, stale bars,
+duplicate sessions, and invalid OHLCV. The refresh command re-fetches a bounded
+overlap and upserts returned bars; it does not delete data and is never run
+automatically by ordinary ingest. `refresh-universe` processes symbols
+sequentially and continues after individual failures, reporting each outcome.
+
+Execution remains staged: research only by default; Alpaca client construction
+requires explicit paper-mode opt-in and always requests paper trading. No live
+broker route is implemented. Nautilus engine construction is an integration seam,
+not evidence that a strategy passes E3. Paper operations and live execution remain
+blocked until the promotion gate passes.
 
 The stack now includes **5 services**: TimescaleDB, Qdrant, Redpanda (Kafka),
 **OPA** (policy engine, :8181) and **Vault** (secrets, :8200). Zero-trust is live:

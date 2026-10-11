@@ -19,7 +19,7 @@ Timeframes: 1m, 5m, 1h, 1d
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pandas as pd
@@ -83,11 +83,11 @@ def ingest(symbol: str, lookback_days: int = 730, timeframe: str = "1d") -> int:
 
     # Incremental: fetch only new bars if we already have history.
     last = timescale.latest_ts(symbol, timeframe)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if last:
         # latest_ts returns naive UTC from PostgreSQL; make it aware for comparison.
         if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
+            last = last.replace(tzinfo=UTC)
         if last.date() >= now.date():
             return 0  # today's bar already in the DB
         start = last + timedelta(days=1)
@@ -103,7 +103,14 @@ def ingest(symbol: str, lookback_days: int = 730, timeframe: str = "1d") -> int:
     df = download(symbol, start, end, timeframe=timeframe)
     if df.empty:
         return 0
-    return timescale.upsert_ohlcv(symbol, timeframe, df)
+    return timescale.upsert_ohlcv(
+        symbol,
+        timeframe,
+        df,
+        source_provider="lse",
+        adjustment_basis="provider_native_unspecified",
+        provider_symbol=symbol,
+    )
 
 
 def _friendly_meta(symbol: str) -> tuple[str, str]:

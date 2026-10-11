@@ -21,8 +21,23 @@ CREATE TABLE IF NOT EXISTS ohlcv (
     low       DOUBLE PRECISION NOT NULL,
     close     DOUBLE PRECISION NOT NULL,
     volume    DOUBLE PRECISION NOT NULL,
+    source_provider TEXT,
+    retrieved_at TIMESTAMPTZ,
+    adjustment_basis TEXT,
+    provider_symbol TEXT,
+    provider_timestamp TIMESTAMPTZ,
+    normalization_version TEXT,
     PRIMARY KEY (symbol, interval, ts)
 );
+
+-- Nullable provenance leaves historical rows explicitly unknown rather than
+-- fabricating source/retrieval details during migration.
+ALTER TABLE ohlcv ADD COLUMN IF NOT EXISTS source_provider TEXT;
+ALTER TABLE ohlcv ADD COLUMN IF NOT EXISTS retrieved_at TIMESTAMPTZ;
+ALTER TABLE ohlcv ADD COLUMN IF NOT EXISTS adjustment_basis TEXT;
+ALTER TABLE ohlcv ADD COLUMN IF NOT EXISTS provider_symbol TEXT;
+ALTER TABLE ohlcv ADD COLUMN IF NOT EXISTS provider_timestamp TIMESTAMPTZ;
+ALTER TABLE ohlcv ADD COLUMN IF NOT EXISTS normalization_version TEXT;
 
 SELECT create_hypertable('ohlcv', 'ts', chunk_time_interval => INTERVAL '7 days', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS ohlcv_symbol_ts_idx ON ohlcv (symbol, ts DESC);

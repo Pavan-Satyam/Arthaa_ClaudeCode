@@ -129,13 +129,15 @@ def ingest(
     symbol: str,
     days: int = typer.Option(730, help="Lookback days (ignored if data already exists)."),
     timeframe: str = typer.Option("1d", help="Candle timeframe: 1d, 1h, 5m, 1m."),
-    provider: str = typer.Option("auto", help="Data provider: auto (LSE→yfinance), lse, yfinance."),
+    provider: str = typer.Option(
+        "auto", help="Provider override; auto uses ARTHAAI_MARKET_DATA_PROVIDER (default: auto)."
+    ),
 ) -> None:
     """Pull OHLCV for SYMBOL into TimescaleDB via the provider chain.
 
-    Default 'auto' tries LSE first, falls back to yfinance if the symbol
-    isn't available on LSE (e.g. USO). Use --provider lse or --provider
-    yfinance to force a single source.
+    With the default auto override, uses ARTHAAI_MARKET_DATA_PROVIDER. When
+    that setting is auto, tries LSE first if configured, then yfinance. Use
+    --provider to force a registered provider for this invocation.
     """
     from arthaai.data.provider import ingest_resilient
 
@@ -174,16 +176,22 @@ def ingest_lse(
 @app.command("provider-status")
 def provider_status(
     symbol: str,
-    prefer: str = typer.Option("", help="Pin this symbol's provider: lse | yfinance | auto (clear)."),
+    prefer: str = typer.Option(
+        "", help="Pin a registered provider for this symbol, or use auto to clear the pin."
+    ),
 ) -> None:
     """Show (or set) the stored data provider for SYMBOL."""
     from arthaai.db import timescale
+    from arthaai.data.provider import default_provider_registry
 
     symbol = symbol.upper()
+    prefer = prefer.strip().lower()
 
     if prefer:
-        if prefer not in ("lse", "yfinance", "auto"):
-            console.print("[red]--prefer must be: lse | yfinance | auto[/]")
+        if prefer != "auto" and not default_provider_registry().has_provider(prefer):
+            console.print(
+                "[red]--prefer must be a registered provider name or 'auto'.[/]"
+            )
             raise typer.Exit(1)
         try:
             timescale.set_preferred_provider(symbol, "" if prefer == "auto" else prefer)
@@ -207,6 +215,7 @@ def provider_status(
 
     t = Table(title=f"Provider status · {symbol}", show_header=False)
     t.add_column("k"); t.add_column("v")
+    t.add_row("configured default", get_settings().market_data_provider)
     t.add_row("preferred", status["preferred_provider"] or "[dim]auto (none pinned)[/]")
     t.add_row("last used", status["last_provider"] or "[dim]—[/]")
     t.add_row("last ingest", str(status["last_ingest_at"] or "—"))
@@ -872,6 +881,220 @@ def compare(
             )
     console.print(t)
     console.print("[dim]L/S = long/short 100% exposure · L/O = long-only 100% · Strat = Kelly-sized · ADX gate for breakout only.[/]")
+
+
+@app.command("research-global")
+def research_global(
+    symbols: str = typer.Option(..., help="Comma-separated ingested stocks, ETFs, and index proxies."),
+    limit: int = typer.Option(1000, help="Maximum stored bars per symbol."),
+    factor_ids: str = typer.Option("", help="Optional comma-separated factor IDs; default is the fixed research set."),
+    horizon: int = typer.Option(1, min=1, help="Forward-return horizon in bars for historical IC."),
+    min_ic_obs: int = typer.Option(20, min=2, help="Prior IC observations before weights are used."),
+    embargo: int = typer.Option(1, min=1, help="Bars embargoed between IC observations and use."),
+    top_quantile: float = typer.Option(0.20, min=0.01, max=1.0, help="Portfolio fraction selected by score."),
+    cost_bps: float = typer.Option(10.0, min=0.0, help="Turnover friction in basis points."),
+    windows: int = typer.Option(2, min=1, help="Number of sequential held-out windows."),
+    oos_pct: float = typer.Option(0.20, min=0.01, max=0.5, help="Fraction of history in each OOS window."),
+) -> None:
+    """Run a diagnostic cross-sectional factor study; never promotes a signal."""
+    from arthaai.factors.panel import build_panel_from_symbols
+    from arthaai.research.cross_sectional import run_factor_research
+
+    symbol_list = [value.strip().upper() for value in symbols.split(",") if value.strip()]
+    if len(set(symbol_list)) < 3:
+        console.print("[red]Provide at least three distinct symbols.[/]")
+        raise typer.Exit(2)
+    panel = build_panel_from_symbols(list(dict.fromkeys(symbol_list)), limit=limit)
+    if not panel or "close" not in panel:
+        console.print("[red]No OHLCV data found; ingest the requested symbols first.[/]")
+        raise typer.Exit(1)
+
+    selected_factors = [value.strip() for value in factor_ids.split(",") if value.strip()] or None
+    try:
+        report = run_factor_research(
+            panel,
+            factor_ids=selected_factors,
+            horizon=horizon,
+            min_ic_obs=min_ic_obs,
+            embargo=embargo,
+            top_quantile=top_quantile,
+            cost_bps=cost_bps,
+            windows=windows,
+            oos_pct=oos_pct,
+        )
+    except ValueError as exc:
+        console.print(f"[red]Research evaluation unavailable:[/] {exc}")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Global factor research · diagnostic only", show_header=True)
+    for column in (
+        "Window", "Assets", "Active", "Strategy", "Benchmark", "Excess",
+        "Sharpe", "MaxDD", "Strategy TO", "Benchmark TO",
+    ):
+        table.add_column(column, justify="right" if column != "Window" else "left")
+    for result in report.windows:
+        table.add_row(
+            f"{result.start[:10]}–{result.end[:10]}",
+            str(result.complete_assets),
+            f"{result.active_fraction:.0%}",
+            f"{result.total_return:+.2%}",
+            f"{result.benchmark_return:+.2%}",
+            f"{result.excess_return:+.2%}",
+            f"{result.sharpe:.2f}",
+            f"{result.max_drawdown:.2%}",
+            f"{result.average_turnover:.2f}",
+            f"{result.benchmark_average_turnover:.2f}",
+        )
+    console.print(table)
+    if report.skipped_windows:
+        console.print("[yellow]Skipped:[/] " + "; ".join(report.skipped_windows))
+    console.print(
+        f"[dim]Universe: {len(symbol_list)} requested · factors: "
+        f"{', '.join(report.factor_ids) or 'default set'} · costs: {cost_bps:g} bps. "
+        "One-session gaps carry the last close; longer gaps exclude an asset. "
+        "Scores at t earn returns at t+1. "
+        "This report does not qualify or promote signals and does not change E3.[/]"
+    )
+
+
+@app.command("refresh-history")
+def refresh_history_command(
+    symbol: str,
+    lookback_days: int = typer.Option(180, min=1, help="Bounded overlapping history window to repair."),
+    timeframe: str = typer.Option("1d", help="Bar interval (1d, 1h, 5m, or 1m)."),
+    provider: str = typer.Option(
+        "auto", help="Provider override; auto uses ARTHAAI_MARKET_DATA_PROVIDER."
+    ),
+) -> None:
+    """Explicitly re-fetch and upsert recent bars to repair stored gaps."""
+    from arthaai.data.provider import refresh_history
+
+    try:
+        result = refresh_history(
+            symbol, lookback_days=lookback_days, timeframe=timeframe, provider=provider
+        )
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]History refresh failed:[/] {exc}")
+        raise typer.Exit(2) from exc
+    console.print(
+        f"refreshed [bold]{result.rows}[/] bars for {result.symbol} via "
+        f"{result.provider} (overlap={lookback_days} days, interval={timeframe})."
+    )
+    console.print("[dim]Existing bars are upserted; ordinary incremental ingest is unchanged.[/]")
+
+
+@app.command("refresh-universe")
+def refresh_universe_command(
+    symbols: str = typer.Option(..., help="Comma-separated symbols to refresh sequentially."),
+    lookback_days: int = typer.Option(180, min=1, help="Bounded overlapping history window."),
+    timeframe: str = typer.Option("1d", help="Bar interval (1d, 1h, 5m, or 1m)."),
+    provider: str = typer.Option(
+        "auto", help="Provider override; auto uses ARTHAAI_MARKET_DATA_PROVIDER."
+    ),
+) -> None:
+    """Explicitly repair recent history for each symbol in a supplied universe."""
+    from arthaai.data.provider import refresh_history_batch
+
+    symbol_list = [value.strip() for value in symbols.split(",")]
+    try:
+        results = refresh_history_batch(
+            symbol_list,
+            lookback_days=lookback_days,
+            timeframe=timeframe,
+            provider=provider,
+        )
+    except ValueError as exc:
+        console.print(f"[red]Universe refresh rejected:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+    table = Table(title=f"History refresh · {len(results)} symbols", show_header=True)
+    for column in ("Symbol", "Provider", "Bars upserted", "Status"):
+        table.add_column(column, justify="right" if column == "Bars upserted" else "left")
+    for result in results:
+        success = result.provider != "error"
+        table.add_row(
+            result.symbol,
+            result.provider,
+            str(result.rows),
+            "[green]ok[/]" if success else "[red]failed[/]",
+        )
+    console.print(table)
+    console.print(
+        f"[dim]Overlap: {lookback_days} days · interval: {timeframe} · provider: {provider}. "
+        "Bars are upserted; no rows are deleted.[/]"
+    )
+    if any(result.provider == "error" for result in results):
+        raise typer.Exit(1)
+
+
+@app.command("audit-history")
+def audit_history_command(
+    symbols: str = typer.Option(..., help="Comma-separated symbols with stored daily bars."),
+    calendar: str = typer.Option("XNYS", help="Default exchange_calendars name, e.g. XNYS or XLON."),
+    calendar_map: str = typer.Option(
+        "", help="Optional per-symbol overrides, e.g. VOD.L=XLON,7203.T=XTKS."
+    ),
+    limit: int = typer.Option(1000, min=1, help="Maximum bars loaded per symbol."),
+    max_stale_sessions: int = typer.Option(1, min=0, help="Staleness sessions allowed before status is stale."),
+) -> None:
+    """Audit OHLCV completeness against exchange sessions; this command is read-only."""
+    from arthaai.db import timescale
+    from arthaai.research.data_quality import audit_history
+
+    symbol_list = list(dict.fromkeys(
+        value.strip().upper() for value in symbols.split(",") if value.strip()
+    ))
+    if not symbol_list:
+        console.print("[red]Provide at least one symbol.[/]")
+        raise typer.Exit(2)
+    calendars = {}
+    try:
+        for entry in calendar_map.split(","):
+            if not entry.strip():
+                continue
+            symbol, separator, calendar_name = entry.partition("=")
+            if not separator or not symbol.strip() or not calendar_name.strip():
+                raise ValueError(f"invalid calendar mapping: {entry}")
+            calendars[symbol.strip().upper()] = calendar_name.strip().upper()
+        data_map = {
+            symbol: timescale.load_ohlcv(symbol, interval="1d", limit=limit)
+            for symbol in symbol_list
+        }
+        reports = audit_history(
+            data_map,
+            calendar_by_symbol=calendars,
+            default_calendar=calendar.upper(),
+            max_stale_sessions=max_stale_sessions,
+        )
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]History audit failed:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+    table = Table(title="Stored OHLCV data quality", show_header=True)
+    for column in ("Symbol", "Calendar", "Bars", "Coverage", "Missing", "Stale", "Duplicates", "Invalid", "Status"):
+        table.add_column(column, justify="right" if column not in ("Symbol", "Calendar", "Status") else "left")
+    for report in reports:
+        table.add_row(
+            report.symbol,
+            report.calendar,
+            str(report.bars),
+            f"{report.coverage_ratio:.1%}",
+            str(len(report.missing_sessions)),
+            str(report.stale_sessions),
+            str(len(report.duplicate_sessions)),
+            str(report.invalid_rows),
+            report.status,
+        )
+    console.print(table)
+    for report in reports:
+        if report.missing_sessions:
+            console.print(
+                f"[dim]{report.symbol} missing sessions: "
+                f"{', '.join(report.missing_sessions[:10])}"
+                f"{'…' if len(report.missing_sessions) > 10 else ''}[/]"
+            )
+    if any(report.status != "ready" for report in reports):
+        raise typer.Exit(1)
 
 
 @app.command("seed-secrets")

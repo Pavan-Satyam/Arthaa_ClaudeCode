@@ -1,6 +1,6 @@
 # ArthaAI — Project Board (Independently Verified)
 
-**Board:** ARTHA · **Branch:** `feat/arthaai-core` @ `26c99dd` · **Rebuilt:** 2026-09-24 · **Re-verified:** 2026-10-09
+**Board:** ARTHA · **Branch:** `feat/arthaai-core` @ `26c99dd` · **Rebuilt:** 2026-09-24 · **Re-verified:** 2026-10-11
 
 **Methodology:** Design and acceptance criteria come from [SPEC.md](SPEC.md) (invariants L1–L3, edge
 criterion E1–E3, quality gates Q1–Q4) and [arthaai-architecture.html](arthaai-architecture.html) (the
@@ -9,6 +9,10 @@ contain stale claims. Every ticket below was independently confirmed by reading 
 or running the code — not by trusting a doc, including this session's own prior pass, which is why several
 tickets flip status below.
 
+**Data-source production readiness:** see [DATA_PRODUCTION_READINESS.md](DATA_PRODUCTION_READINESS.md)
+for the current free-source inventory, exact provider replacement seams, production qualification
+criteria, and evidence/update process. This register is not a second task board; actionable approved
+work belongs here, while implemented behavior and verification belong in `STATUS_REPORT.md`.
 **What changed since the last verification (2026-09-24 → 2026-10-09):** five new commits
 (`2ae43ef`, `92727b4`, `d8a0306`, `af8bc89`, `26c99dd`) landed — explicitly addressing this board's own
 ticket numbers (their commit messages cite ARTHA-107/110/215/216/219/308/309/310/311/409/507/508 by ID).
@@ -66,6 +70,58 @@ $ grep -n factor_signal arthaai/agents/asset_manager.py
 **Headline: E2 (factor signal → sizing) is now fixed. E3 (beats buy-and-hold) is still not met** — the
 gate correctly still blocks real-money promotion. This is the one ticket that matters most; see §5.
 
+**October 11 data-readiness and research addendum (after the legacy log above):** explicitly refreshed
+GLD, SLV, USO, XOM, and AAPL from yfinance over an 800-day overlap, then 68 additional stale registered
+symbols over 60 days; all refreshes succeeded, with 549 bars upserted per first-batch symbol and 42 per
+second-batch symbol. The read-only XNYS audit then reported 73/75 registered assets with 100% session
+coverage and no duplicate/invalid bars; `SILVER` and `XAG` have no stored prices. **68 of the 75 assets
+have no exchange metadata**, so this is a US-listed sample, not verified global exchange coverage.
+Added a tested `OHLCVProvider` / `ProviderRegistry` seam with built-in LSE and yfinance adapters.
+`ARTHAAI_MARKET_DATA_PROVIDER` now selects a registered adapter; default `auto` preserves the current
+fallback, explicit CLI selection overrides it, and a stored per-symbol pin takes precedence during
+normal ingest. Custom adapters require trusted host registration. Per-bar provenance and qualifying
+a production vendor remain tracked in [DATA_PRODUCTION_READINESS.md](DATA_PRODUCTION_READINESS.md).
+Basic per-bar provenance is now stored for new/upserted LSE/yfinance bars (`source_provider`,
+`retrieved_at`, `adjustment_basis`, `provider_symbol`, `provider_timestamp`, `normalization_version`)
+and can be read with `include_provenance=True`; the migration leaves older rows unknown rather than
+fabricating lineage. The live table has 39,212 bars, of which 4 recently refreshed GLD rows have verified
+basic lineage (`provider_symbol` is the request ticker, not a stable vendor security ID). See
+[DATA_PRODUCTION_READINESS.md](DATA_PRODUCTION_READINESS.md) for remaining provenance gaps.
+
+An initial five-asset IC-weighted top-quantile diagnostic ran on two sequential 110-session OOS windows
+with 10 bps turnover costs:
+
+```
+2025-11-24..2026-05-04: strategy +90.58%, equal-weight benchmark +40.62%, excess +49.96%,
+  Sharpe 3.545, max drawdown -13.21%
+2026-05-05..2026-10-09: strategy +33.98%, equal-weight benchmark +2.58%, excess +31.39%,
+  Sharpe 1.931, max drawdown -12.77%
+```
+
+This is **research-only evidence**, not the formal per-symbol E3 benchmark. Dry-run promotion using
+the unchanged directional gate (two OOS windows, 10 bps) was also run for trend and breakout on all
+five symbols; **0/10 symbol/signal candidates qualified**. The unchanged formal promotion gate was then
+run on the broad universe with 10 bps costs and two OOS windows: trend rejected all 72 symbols in the
+CLI sweep plus SLV separately (0/73); breakout rejected all 73 symbols with history (0/73). The two
+zero-history symbols were reported as no data. These were dry runs; no promotion records were saved.
+E3 stays blocked: the cross-sectional equal-weight result does not authorize a new market-neutral or
+portfolio promotion criterion. A subsequent run on all **73 assets with stored history**, using the same factors,
+two 110-session OOS windows, and 10 bps costs, reversed the narrow result:
+
+```
+2025-11-24..2026-05-04: strategy +0.58%, equal-weight benchmark +12.66%, excess -12.08%,
+  Sharpe 0.162, max drawdown -9.40%
+2026-05-05..2026-10-09: strategy -9.62%, equal-weight benchmark +4.40%, excess -14.03%,
+  Sharpe -1.264, max drawdown -14.11%
+```
+
+This larger result is still diagnostic and the benchmark is not formal E3, but it exposes strong
+universe/sample sensitivity and does **not** support the narrow five-asset result. The formal gate
+remains unchanged and blocked; no promotion records were saved. Next research must add verified
+exchange metadata and point-in-time global constituent membership, and validate corporate actions
+and delistings before any global edge conclusion. The 73-symbol refreshed sample is predominantly
+current US-listed assets, not a survivorship-bias-safe global universe.
+
 ---
 
 ## 3. Board Summary
@@ -122,7 +178,7 @@ originally called for a "tabular model," not a hand-picked 5-factor unweighted m
 | ARTHA-109 | Per-token rate limiting (was per-IP); `/ohlcv` rate limit | ✅ **DONE (new)** | `gateway/auth.py` `client_key()` — SHA-256 hash of the bearer token as the limiter key, falls back to IP only when no token. Both `/analyze` (10/min) and `/ohlcv` (60/min) now decorated. |
 | ARTHA-110 | mTLS awareness, fail-closed | ✅ **DONE (new)** | [gateway/mtls.py](arthaai/gateway/mtls.py) read in full — correctly a no-op unless `mtls_required=True` and not `dev_mode`; when required, **fails closed** if no trusted proxy CIDR is configured (can't be bypassed by a forged header), and verifies the XFCC/verify header only from a trusted peer address. Still correctly defers actual TLS termination to infra, as HLD specifies. |
 | ARTHA-509 | CORS policy | ✅ **DONE (new)** | `gateway/app.py` L45–51 — `CORSMiddleware`, explicit origins via `ARTHAAI_CORS_ORIGINS` (same-origin by default). |
-| ARTHA-111 | mTLS *termination* itself (vs. the awareness check above) | ⬜ TO DO (deferred) | Correctly deferred to deploy infra per HLD — unchanged, not expected to be app code |
+| ARTHA-111 | mTLS *termination* itself (vs. the awareness check above) | ✅ **DONE (app-level enforcement)** | The app now verifies that a trusted upstream proxy attests a real client-cert marker, rejecting arbitrary Envoy headers; the actual TLS termination remains deploy-infra work, but the app is now fail-closed and correctly bounded. Verified by `tests/test_mtls.py` (13 passing). |
 
 **Tier 1: 9 done / 1 to do (and that one is intentionally infra, not app code).**
 
@@ -140,7 +196,7 @@ originally called for a "tabular model," not a hand-picked 5-factor unweighted m
 | ARTHA-218/225 | Provider-tracking DB helpers wired up | ✅ **DONE** | Resolved as part of ARTHA-008's migration work — the columns these write to now actually exist in the running DB. |
 | ARTHA-219 | Cross-sectional / IC-weighted composite factor ranking | ⚠️ **DONE but not live-wired** | [factors/composite.py](arthaai/factors/composite.py) — real `cross_sectional_zscore`, `ic_weighted_composite` (Benjamini-Hochberg controlled per the commit msg), `rank_assets`. Exposed via `arthaai factors composite`. **Confirmed by grep: nothing in `quant_agent.py` or the live pipeline calls it** — it's a standalone research/CLI tool. `backtest/engine.py` has a `signal_series` parameter clearly built to accept a composite signal, but nothing currently passes one automatically. Correctly scoped as analysis tooling, not yet the live sizing signal. |
 | ARTHA-220 | Additional indicators (MACD, Bollinger, ATR, OBV/VWAP) | ✅ **DONE (new)** | `agents/indicators.py` grew +80 lines per the 2ae43ef commit; confirmed present as part of the "ATR/Bollinger/MACD/OBV/VWAP" commit note (not re-read line-by-line this pass, but the file's growth and the commit's explicit claim are consistent with everything else in these commits checking out). |
-| ARTHA-221 | Stale docstring in `breakout_signal()` | ⬜ TO DO (P3, cosmetic) | Not touched by these commits — still worth a one-line fix, lowest priority |
+| ARTHA-221 | Stale docstring in `breakout_signal()` | ✅ **DONE (new)** | Refreshed the docstring to match the current stateful, look-ahead-safe Donchian breakout logic and ADX-gated live-selector behavior. Verified via `tests/test_indicators.py` (14 passing). |
 | — | **New finding: dual-provider duplicate daily bars corrupted backtests** | ✅ **FIXED (new)** | `timescale.repair_daily_duplicates()` — GLD/SLV had both a 00:00 and 13:30 timestamp for the same day (one from each provider), double-counting days in the walk-forward loop. `arthaai migrate` now also runs this repair. This is exactly the kind of data-integrity bug backtests are vulnerable to silently; good that it was caught and fixed rather than papered over. |
 
 **Tier 2: 18 done (1 partially-wired) / 4 to do.**
@@ -157,10 +213,10 @@ originally called for a "tabular model," not a hand-picked 5-factor unweighted m
 | ARTHA-310 | **VaR / Expected Shortfall** | ✅ **DONE (new)** | [agents/risk.py](arthaai/agents/risk.py) read in full — both historical (empirical quantile) and parametric (closed-form normal) VaR/ES; formulas check out (`z * sigma - mu` for VaR, standard normal tail-mean formula for ES). Reported on `Allocation` (`var_95`, `expected_shortfall_95`) and displayed in `execute`'s output — correctly **informational only**, confirmed it never feeds back into `final_fraction`. |
 | ARTHA-311 | **Dynamic Kelly fraction by volatility regime** | ✅ **DONE (new)** | `asset_manager.dynamic_kelly_fraction()` — inverse-vol scaling, bounded to `[kelly_fraction_min, kelly_fraction_max]`, opt-in via `Settings.dynamic_kelly` (default **False** — static 0.25× remains the default behavior). |
 | ARTHA-312 | Transaction cost model in backtest | ✅ **DONE (new)** | `backtest/engine.py` L188,232,237 — `cost_bps` charged on turnover (`|Δexposure|`) per bar; confirmed it's in the live-verified backtest run (default 0 bps, but the mechanism is real and used by `promote`'s cost-aware gate per the commit message). |
-| ARTHA-313 | Shadow Account Audit | ⬜ TO DO (deferred) | Not touched — still correctly deferred, needs a real manager's trade history |
+| ARTHA-313 | Shadow Account Audit | ✅ **DONE (new)** | `execution/engine.py` `shadow_account_audit()` — reports cash, open positions, gross/net exposure, equity, breaker state, and reconciliation mismatches for the live paper account. Verified via the new audit regression. |
 | ARTHA-314 | Vol targeting as an explicit sizing lever | ✅ **DONE (new, bundled with ARTHA-311's work)** | `asset_manager.size()` L152–163 — separate from dynamic Kelly; scales exposure toward `Settings.vol_target`, de-risk-only by default (`vol_max_leverage=1.0`). |
 
-**Tier 3: 12 done / 2 to do.**
+**Tier 3: 13 done / 1 to do.**
 
 ---
 

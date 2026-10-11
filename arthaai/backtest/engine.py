@@ -144,6 +144,17 @@ def run_backtest(
         if data_slice is not None:
             s = s.iloc[data_slice]
         ext = pd.Series(np.asarray(s, dtype=float)).reset_index(drop=True)
+    elif signal == "composite":
+        from arthaai.agents.quant_agent import factor_signal_series
+
+        try:
+            s = factor_signal_series(symbol, df)
+            if data_slice is not None and s is not None:
+                s = s.iloc[data_slice]
+            if s is not None:
+                ext = pd.Series(np.asarray(s, dtype=float)).reset_index(drop=True)
+        except Exception:
+            ext = None
 
     close = df["close"].reset_index(drop=True)
     high = df["high"].reset_index(drop=True)

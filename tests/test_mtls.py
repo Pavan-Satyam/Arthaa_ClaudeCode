@@ -30,6 +30,10 @@ class TestClientCertVerified:
         req = _Request({"x-forwarded-client-cert": "By=spiffe://..."})
         assert mtls.client_cert_verified(req, "203.0.113.0/24") is True
 
+    def test_envoy_xfcc_requires_certificate_marker(self):
+        req = _Request({"x-forwarded-client-cert": "anything"})
+        assert mtls.client_cert_verified(req, "203.0.113.0/24") is False
+
     def test_nginx_ssl_client_verify_success(self):
         req = _Request({"x-ssl-client-verify": "SUCCESS"})
         assert mtls.client_cert_verified(req, "203.0.113.0/24") is True

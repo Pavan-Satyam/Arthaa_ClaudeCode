@@ -55,6 +55,17 @@ def _peer_is_trusted(request: Request, networks: list[ipaddress._BaseNetwork]) -
     return any(addr in net for net in networks)
 
 
+def _envoy_xfcc_is_valid(xfcc: str | None) -> bool:
+    """Require an actual Envoy client-cert marker, not an arbitrary string."""
+    if not xfcc:
+        return False
+    value = xfcc.strip()
+    if not value:
+        return False
+    # Envoy encodes cert metadata like "By=spiffe://...;Hash=...;Cert=...".
+    return any(marker in value for marker in ("By=", "Hash=", "Cert="))
+
+
 def client_cert_verified(request: Request, trusted_proxies: str = "") -> bool:
     """True when a *trusted* proxy attests a verified client certificate.
 
@@ -65,8 +76,8 @@ def client_cert_verified(request: Request, trusted_proxies: str = "") -> bool:
     if not networks or not _peer_is_trusted(request, networks):
         return False
     xfcc = request.headers.get(_XFCC_HEADER)
-    if xfcc and xfcc.strip():
-        return True  # Envoy populates XFCC only for mTLS connections
+    if _envoy_xfcc_is_valid(xfcc):
+        return True
     for header in _VERIFY_HEADERS:
         value = request.headers.get(header)
         if value and value.strip().lower() in _TRUTHY:

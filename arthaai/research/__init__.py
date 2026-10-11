@@ -1,0 +1,1 @@
+"""Offline research and validation tools; not used by live order sizing."""

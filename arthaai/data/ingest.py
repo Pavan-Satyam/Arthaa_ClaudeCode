@@ -7,7 +7,7 @@ blocks ingestion (resilience over coupling).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 
@@ -40,7 +40,7 @@ def _publish_event(symbol: str, n: int) -> None:
         p = Producer({"bootstrap.servers": get_settings().kafka_bootstrap})
         p.produce(get_settings().ingest_topic, key=symbol, value=f"{n}")
         p.flush(2)
-    except Exception:  # noqa: BLE001 - bus is optional; never block ingestion
+    except Exception:
         pass
 
 
@@ -54,7 +54,7 @@ def _friendly_meta(symbol: str) -> tuple[str, str]:
         quote = (info.get("quoteType") or "").upper()
         asset_class = "etf" if quote == "ETF" else "equity"
         return name, asset_class
-    except Exception:  # noqa: BLE001 - enrichment is optional
+    except Exception:
         return symbol, "equity"
 
 
@@ -67,8 +67,15 @@ def ingest(symbol: str, lookback_days: int = 730, interval: str = "1d") -> int:
     symbol = symbol.upper()
     name, asset_class = _friendly_meta(symbol)
     timescale.ensure_asset(symbol, name=name, asset_class=asset_class)
-    start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    start = datetime.now(UTC) - timedelta(days=lookback_days)
     df = _download(symbol, start, interval)
-    written = timescale.upsert_ohlcv(symbol, interval, df)
+    written = timescale.upsert_ohlcv(
+        symbol,
+        interval,
+        df,
+        source_provider="yfinance",
+        adjustment_basis="yfinance_auto_adjust_false",
+        provider_symbol=symbol,
+    )
     _publish_event(symbol, written)
     return written

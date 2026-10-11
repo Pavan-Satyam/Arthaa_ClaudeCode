@@ -356,21 +356,18 @@ def breakout_signal(
     entry_window: int = 20, exit_window: int = 10,
     adx_threshold: float = 0.0,
 ) -> tuple[str, float]:
-    """Donchian-style breakout entry (Turtle system 1), stateful.
+    """Stateful Donchian breakout summary for the latest bar.
 
-    A fundamentally different signal class from SMA-cross: it enters on a
-    *new* N-day extreme rather than a moving-average crossover, and *holds*
-    until an opposite M-day extreme (shorter window) is hit. This gives
-    inherent multi-day holding and cuts the whipsaw that kills SMA-cross in
-    choppy markets.
+    This is the per-bar wrapper around `breakout_positions()`: it walks the
+    recent high/low envelope using only bars at or before the current bar,
+    enters on a new N-day extreme, and exits when the position is hit by the
+    opposite M-day extreme. The state machine keeps the breakout logic
+    directional and look-ahead-safe while avoiding a whipsaw-heavy SMA cross in
+    choppy conditions.
 
-    Because position state matters (you hold until an exit signal), this
-    simulates the system forward through the window and returns the position
-    held at the most recent bar. `breakout_positions` computes the full series
-    efficiently; this wraps it for the per-bar call pattern of the live
-    signal-selector. It is called by `db_agent` when ADX ≥ 25 (trending regime);
-    otherwise the live selector uses `trend_signal`. The backtest uses
-    `breakout_positions` directly.
+    The live selector calls this when the ADX regime is trending (ADX >= 25);
+    otherwise it falls back to `trend_signal`. The backtest uses the full series
+    from `breakout_positions()` directly.
 
     Returns (label, score in {-1, 0, 1}).
     """

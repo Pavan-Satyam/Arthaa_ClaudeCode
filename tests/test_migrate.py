@@ -47,5 +47,15 @@ class TestSchemaStatements:
         assert "preferred_provider" in joined
         assert "ADD COLUMN IF NOT EXISTS" in joined
 
+    def test_schema_has_nullable_per_bar_provenance(self):
+        joined = "\n".join(schema_statements())
+        assert "source_provider TEXT" in joined
+        assert "retrieved_at TIMESTAMPTZ" in joined
+        assert "adjustment_basis TEXT" in joined
+        assert "ADD COLUMN IF NOT EXISTS source_provider" in joined
+        assert "provider_symbol TEXT" in joined
+        assert "provider_timestamp TIMESTAMPTZ" in joined
+        assert "normalization_version TEXT" in joined
+
     def test_every_statement_is_non_empty(self):
         assert all(s.strip() for s in schema_statements())

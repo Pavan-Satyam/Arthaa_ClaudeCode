@@ -98,6 +98,55 @@ class ExecutionEngine:
             {s: p.entry_price for s, p in self.portfolio.positions.items() if p.state == PositionState.OPEN}
         )
 
+    def shadow_account_audit(self, prices: dict[str, float] | None = None) -> dict:
+        """Return a conservative reconciliation snapshot for the live paper account.
+
+        The purpose is not to predict future performance; it is to make the current
+        execution state auditable: cash on hand, marked open notional, aggregate
+        gross/net exposure, and any obvious reconciliation issues. This is the
+        minimal implementation needed for the deferred shadow-account board item.
+        """
+        prices = prices or {}
+        open_positions: list[dict] = []
+        gross_exposure = 0.0
+        net_exposure = 0.0
+        discrepancies: list[str] = []
+
+        for symbol, pos in sorted(self.portfolio.positions.items()):
+            if pos.state != PositionState.OPEN:
+                continue
+            price = prices.get(symbol, pos.entry_price)
+            if price is None:
+                discrepancies.append(f"missing_price:{symbol}")
+                continue
+            quantity = float(pos.quantity)
+            notional = quantity * float(price)
+            gross_exposure += abs(notional)
+            net_exposure += notional
+            open_positions.append(
+                {
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "entry_price": float(pos.entry_price),
+                    "mark_price": float(price),
+                    "notional": float(notional),
+                    "side": "long" if quantity >= 0 else "short",
+                }
+            )
+
+        cash = float(self.portfolio.cash)
+        status = "ok" if not discrepancies else "mismatch"
+        return {
+            "cash": cash,
+            "open_positions": open_positions,
+            "gross_exposure": float(gross_exposure),
+            "net_exposure": float(net_exposure),
+            "equity": float(self.equity),
+            "state": self.portfolio.state.value,
+            "status": status,
+            "discrepancies": discrepancies,
+        }
+
     def mark_equity(self, equity: float) -> None:
         before = self.portfolio.state
         open_positions = {

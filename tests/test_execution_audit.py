@@ -136,3 +136,20 @@ class TestSignalExit:
     def test_exit_position_noop_when_flat(self):
         e = ExecutionEngine(initial_equity=100_000.0)
         assert e.exit_position("GLD", 110.0) is None
+
+
+class TestShadowAccountAudit:
+    def test_shadow_account_reports_cash_and_open_exposure(self):
+        e = ExecutionEngine(initial_equity=100_000.0)
+        e.submit(
+            "GLD", {"final_fraction": 0.10}, last_price=100.0, direction="bullish",
+            ts=pd.Timestamp("2025-01-01"),
+        )
+
+        snapshot = e.shadow_account_audit({"GLD": 100.0})
+
+        assert snapshot["cash"] == pytest.approx(e.portfolio.cash)
+        assert snapshot["open_positions"][0]["symbol"] == "GLD"
+        assert snapshot["gross_exposure"] == pytest.approx(10_000.0)
+        assert snapshot["net_exposure"] == pytest.approx(10_000.0)
+        assert snapshot["discrepancies"] == []

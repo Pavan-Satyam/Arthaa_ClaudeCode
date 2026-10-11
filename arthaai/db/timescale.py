@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import psycopg
 
 from arthaai.config import get_settings
+
+OHLCV_NORMALIZATION_VERSION = "canonical_ohlcv_v1"
 
 
 @contextmanager
@@ -59,23 +61,54 @@ def _canonical_ts(ts, interval: str):
     return ts
 
 
-def upsert_ohlcv(symbol: str, interval: str, rows: pd.DataFrame) -> int:
-    """Insert/update OHLCV bars. `rows` has columns ts, open, high, low, close, volume."""
+def upsert_ohlcv(
+    symbol: str,
+    interval: str,
+    rows: pd.DataFrame,
+    *,
+    source_provider: str | None = None,
+    adjustment_basis: str | None = None,
+    provider_symbol: str | None = None,
+    retrieved_at: datetime | None = None,
+    normalization_version: str = OHLCV_NORMALIZATION_VERSION,
+) -> int:
+    """Insert/update OHLCV bars and optional batch provenance.
+
+    Existing rows written before lineage support remain NULL for provenance;
+    this function never retroactively guesses their source or adjustment basis.
+    """
     if rows.empty:
         return 0
+    retrieval_time = retrieved_at or datetime.now(UTC)
     records = [
         (
             symbol, _canonical_ts(r.ts, interval).to_pydatetime(), interval,
             r.open, r.high, r.low, r.close, r.volume,
+            source_provider, retrieval_time, adjustment_basis, provider_symbol,
+            (
+                pd.Timestamp(r.ts).tz_localize("UTC")
+                if pd.Timestamp(r.ts).tzinfo is None
+                else pd.Timestamp(r.ts).tz_convert("UTC")
+            ).to_pydatetime(),
+            normalization_version,
         )
         for r in rows.itertuples(index=False)
     ]
     sql = """
-        INSERT INTO ohlcv (symbol, ts, interval, open, high, low, close, volume)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO ohlcv
+            (symbol, ts, interval, open, high, low, close, volume,
+               source_provider, retrieved_at, adjustment_basis, provider_symbol,
+               provider_timestamp, normalization_version)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (symbol, interval, ts) DO UPDATE
           SET open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
-              close = EXCLUDED.close, volume = EXCLUDED.volume;
+              close = EXCLUDED.close, volume = EXCLUDED.volume,
+              source_provider = EXCLUDED.source_provider,
+              retrieved_at = EXCLUDED.retrieved_at,
+              adjustment_basis = EXCLUDED.adjustment_basis,
+              provider_symbol = EXCLUDED.provider_symbol,
+              provider_timestamp = EXCLUDED.provider_timestamp,
+              normalization_version = EXCLUDED.normalization_version;
     """
     with connection() as conn, conn.cursor() as cur:
         cur.executemany(sql, records)
@@ -106,24 +139,38 @@ def repair_daily_duplicates() -> int:
     return deleted
 
 
-def load_ohlcv(symbol: str, interval: str = "1d", limit: int = 400) -> pd.DataFrame:
+def load_ohlcv(
+    symbol: str,
+    interval: str = "1d",
+    limit: int = 400,
+    *,
+    include_provenance: bool = False,
+) -> pd.DataFrame:
     """Return the most recent `limit` bars ascending by time.
 
     Daily series are de-duplicated by calendar day (one bar per day, latest
     timestamp wins) so legacy double-ingested days cannot distort analytics.
+    Set ``include_provenance`` to include source provider, retrieval timestamp,
+    and adjustment basis. The default result schema remains unchanged.
     """
+    columns = "ts, open, high, low, close, volume"
+    if include_provenance:
+        columns += (
+            ", source_provider, retrieved_at, adjustment_basis, provider_symbol, "
+            "provider_timestamp, normalization_version"
+        )
     if interval == "1d":
-        sql = """
-            SELECT ts, open, high, low, close, volume FROM (
-                SELECT DISTINCT ON (ts::date) ts, open, high, low, close, volume
+        sql = f"""
+            SELECT {columns} FROM (
+                SELECT DISTINCT ON (ts::date) {columns}
                 FROM ohlcv WHERE symbol = %s AND interval = %s
                 ORDER BY ts::date DESC, ts DESC
                 LIMIT %s
             ) t ORDER BY ts ASC;
         """
     else:
-        sql = """
-            SELECT ts, open, high, low, close, volume
+        sql = f"""
+            SELECT {columns}
             FROM ohlcv WHERE symbol = %s AND interval = %s
             ORDER BY ts DESC LIMIT %s;
         """
@@ -252,7 +299,7 @@ def get_preferred_provider(symbol: str) -> str | None:
 def record_ingest_provider(symbol: str, provider: str, ts: datetime | None = None) -> None:
     """Record the provider used for the latest ingest run."""
     symbol = symbol.upper()
-    ts = ts or datetime.now(timezone.utc)
+    ts = ts or datetime.now(UTC)
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE assets SET last_provider = %s, last_ingest_at = %s WHERE symbol = %s;",
