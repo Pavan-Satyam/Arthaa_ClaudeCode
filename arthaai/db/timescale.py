@@ -200,6 +200,103 @@ def recent_ingest_batches(limit: int = 20) -> list[dict]:
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
+def upsert_corporate_actions(rows: list[dict]) -> int:
+    """Insert/refresh corporate-action rows; returns rows written."""
+    if not rows:
+        return 0
+    with connection() as conn, conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                "INSERT INTO corporate_action "
+                "(symbol, ex_date, action_type, ratio, amount, reference_price, source) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (symbol, ex_date, action_type) DO UPDATE SET "
+                "ratio = EXCLUDED.ratio, amount = EXCLUDED.amount, "
+                "source = EXCLUDED.source, recorded_at = now();",
+                (
+                    str(row["symbol"]).upper(),
+                    row["ex_date"],
+                    row["action_type"],
+                    row.get("ratio"),
+                    row.get("amount"),
+                    row.get("reference_price"),
+                    row.get("source", "unknown"),
+                ),
+            )
+        conn.commit()
+    return len(rows)
+
+
+def load_corporate_actions(symbol: str | None = None) -> list[dict]:
+    """Corporate actions for one symbol (or all), ordered by ex-date."""
+    columns = ("symbol", "ex_date", "action_type", "ratio", "amount", "reference_price", "source")
+    with connection() as conn, conn.cursor() as cur:
+        if symbol:
+            cur.execute(
+                "SELECT symbol, ex_date, action_type, ratio, amount, reference_price, source "
+                "FROM corporate_action WHERE symbol = %s ORDER BY ex_date;",
+                (symbol.upper(),),
+            )
+        else:
+            cur.execute(
+                "SELECT symbol, ex_date, action_type, ratio, amount, reference_price, source "
+                "FROM corporate_action ORDER BY symbol, ex_date;"
+            )
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def set_action_reference_prices() -> int:
+    """Fill ``reference_price`` from the prior close in stored OHLCV; returns rows set."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE corporate_action ca SET reference_price = ("
+            "SELECT o.close FROM ohlcv o WHERE o.symbol = ca.symbol AND o.interval = '1d' "
+            "AND o.ts < ca.ex_date ORDER BY o.ts DESC LIMIT 1) "
+            "WHERE ca.reference_price IS NULL AND EXISTS ("
+            "SELECT 1 FROM ohlcv o WHERE o.symbol = ca.symbol AND o.interval = '1d' "
+            "AND o.ts < ca.ex_date);"
+        )
+        updated = cur.rowcount
+        conn.commit()
+    return updated
+
+
+def upsert_issuer(cik: str, name: str | None = None) -> None:
+    """Register a legal reporting entity by its SEC CIK."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO issuer (cik, name) VALUES (%s, %s) "
+            "ON CONFLICT (cik) DO UPDATE SET name = COALESCE(EXCLUDED.name, issuer.name);",
+            (cik, name),
+        )
+        conn.commit()
+
+
+def link_asset_issuer(symbol: str, cik: str) -> None:
+    """Point an asset at its issuer (many assets may share one CIK)."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE assets SET issuer_cik = %s WHERE symbol = %s;", (cik, symbol.upper())
+        )
+        conn.commit()
+
+
+def issuer_securities(cik: str) -> list[str]:
+    """Every tradeable symbol linked to one issuer CIK (one-to-many check)."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol FROM assets WHERE issuer_cik = %s ORDER BY symbol;", (cik,)
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def assets_missing_issuer() -> list[str]:
+    """Registered symbols not yet linked to an issuer."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT symbol FROM assets WHERE issuer_cik IS NULL ORDER BY symbol;")
+        return [row[0] for row in cur.fetchall()]
+
+
 def _canonical_ts(ts, interval: str):
     """Canonicalise a bar timestamp.
 

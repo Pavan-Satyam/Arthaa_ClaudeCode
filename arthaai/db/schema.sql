@@ -102,3 +102,33 @@ CREATE TABLE IF NOT EXISTS ingest_batch (
 CREATE INDEX IF NOT EXISTS ingest_batch_symbol_idx
     ON ingest_batch (symbol, started_at DESC);
 
+-- Corporate actions (splits/dividends) for adjustment auditability. ``ratio`` is
+-- new shares per old share (splits); ``amount`` is cash per share (dividends).
+-- ``reference_price`` is the prior close the adjustment is applied against, so a
+-- split factor or dividend yield can be reproduced and audited.
+CREATE TABLE IF NOT EXISTS corporate_action (
+    symbol          TEXT        NOT NULL REFERENCES assets(symbol),
+    ex_date         TIMESTAMPTZ NOT NULL,
+    action_type     TEXT        NOT NULL,        -- 'split' | 'dividend'
+    ratio           DOUBLE PRECISION,
+    amount          DOUBLE PRECISION,
+    reference_price DOUBLE PRECISION,
+    source          TEXT        NOT NULL,
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, ex_date, action_type)
+);
+CREATE INDEX IF NOT EXISTS corporate_action_symbol_idx
+    ON corporate_action (symbol, ex_date DESC);
+
+-- Issuer (legal reporting entity) identified by SEC CIK. One CIK can map to many
+-- tradeable securities (e.g. GOOG and GOOGL share a CIK), so the relationship is
+-- issuer 1 -> N assets, not a column on assets that assumes one-to-one.
+CREATE TABLE IF NOT EXISTS issuer (
+    cik         TEXT PRIMARY KEY,       -- zero-padded 10-digit SEC CIK
+    name        TEXT,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS issuer_cik TEXT REFERENCES issuer(cik);
+CREATE INDEX IF NOT EXISTS assets_issuer_cik_idx ON assets (issuer_cik);
+
+

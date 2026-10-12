@@ -369,8 +369,9 @@ a *new* data axis, not a new signal on this sample.
 |---|---|---|---|
 | ARTHA-001–007 | Docker stack, config, schema, Vault, OPA, breaker, pyproject/Makefile | ✅ DONE | Unchanged from last pass, re-confirmed stack up |
 | ARTHA-008 | Schema migration tooling | ✅ **DONE (new)** | [db/migrate.py](arthaai/db/migrate.py) — idempotent SQL-statement splitter + `arthaai migrate`. Ran it live: created `signal_promotion` + provider columns in the long-lived dev volume. Docstring explicitly names this exact gap from my last pass as the reason it exists. |
+| ARTHA-009 | **Operational storage decisions + HA/backup configs** | ✅ **DONE (new, 2026-10-12)** | [docs/OPERATIONAL_STORAGE.md](docs/OPERATIONAL_STORAGE.md) — retention policy (intraday 1m/5m 30 days, 1h 2 years, daily + lineage indefinite), HA (primary + streaming replica), backup (WAL/PITR + nightly logical) and verification requirements. [arthaai/db/retention.sql](arthaai/db/retention.sql) registers an idempotent daily prune job (applied live: job 1000). [docker-compose.ha.yml](docker-compose.ha.yml) adds replica + backup sidecar (`docker compose config` validates); [arthaai/db/init-replication.sql](arthaai/db/init-replication.sql) creates the replication role. Blueprint only — not yet validated in a live HA environment. |
 
-**Foundation: 9 done / 0 to do.**
+**Foundation: 10 done / 0 to do.**
 
 ---
 
@@ -410,8 +411,10 @@ a *new* data axis, not a new signal on this sample.
 | ARTHA-230 | **Point-in-time universe membership** (survivorship / selection-bias control) | ✅ **DONE (new, 2026-10-12)** | `universe_membership` table (symbol, valid_from, valid_to, source); pure logic in [data/membership.py](arthaai/data/membership.py); `timescale.upsert_membership/load_membership/universe_as_of`; CLI `backfill-membership` (derives listing windows from OHLCV coverage — a conservative floor) and `universe-as-of`; `freeze-universe --as-of DATE` restricts to PIT members and records `membership_source`. Live: 71 members at 2018-01-01 vs 73 today; PIT freeze hash `61a557e552f1a15b`. A vendor security master can populate the same table with its own `source`. Tests: [test_membership.py](tests/test_membership.py). |
 | ARTHA-231 | **Ingestion-batch audit + lineage view** (provenance gap) | ✅ **DONE (new, 2026-10-12)** | `ingest_batch` table (batch_id, symbol, interval, provider, started/finished, rows_written, status, error); `timescale.record_ingest_batch/recent_ingest_batches`; `refresh_history` records every call (best-effort, never fatal) and emits a `data_empty` alert when a provider returns nothing; CLI `ingest-batches` shows the audit trail. Complements the per-bar provenance columns (ARTHA-227) with a batch-level audit seam. |
 | ARTHA-232 | **Reusable provider adapter contract** (qualified-vendor seam) | ✅ **DONE (new, 2026-10-12)** | [data/provider_contract.py](arthaai/data/provider_contract.py) — `check_provider_contract()` validates any adapter against the canonical contract (name, adjustment_basis, `is_available`, `provider_symbol`, canonical columns, sorted-unique `ts`) and returns a pass/fail report. A vendor package runs it before `register_provider`; consumers stay on the canonical schema. Tests: [test_provider_contract.py](tests/test_provider_contract.py). |
+| ARTHA-233 | **Corporate-action capture + gap audit** (adjusted-data semantics) | ✅ **DONE (new, 2026-10-12)** | `corporate_action` table (symbol, ex_date, action_type, ratio, amount, **reference_price**, source); [data/corporate_actions.py](arthaai/data/corporate_actions.py) `fetch_corporate_actions` (yfinance splits/dividends) + pure `scan_unexplained_gaps`; `timescale.upsert_corporate_actions/load_corporate_actions/set_action_reference_prices` (reference price = prior close from stored OHLCV). CLI `ingest-actions` (captured 460 actions across 4 symbols) and `audit-actions` (flags overnight gaps > threshold not explained by an action). Tests: [test_corporate_actions.py](tests/test_corporate_actions.py). |
+| ARTHA-234 | **Stable instrument IDs — issuer/CIK (one-to-many)** | ✅ **DONE (new, 2026-10-12)** | `issuer` table (cik PK) + `assets.issuer_cik` FK — models issuer **1 → N** securities (a CIK is a legal entity; GOOG/GOOGL share one). `timescale.upsert_issuer/link_asset_issuer/issuer_securities/assets_missing_issuer`; CLI `backfill-issuers` (links via EDGAR's public map; 45 assets linked). One-to-many confirmed live (one CIK → two symbols). |
 
-**Tier 2: 27 done (1 partially-wired) / 4 to do.**
+**Tier 2: 29 done (1 partially-wired) / 4 to do.**
 
 ---
 

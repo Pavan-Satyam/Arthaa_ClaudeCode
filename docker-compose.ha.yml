@@ -1,0 +1,83 @@
+# ArthaAI TimescaleDB HA + backup override (blueprint — see docs/OPERATIONAL_STORAGE.md).
+#
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d
+#
+# Adds a streaming replica and a scheduled logical-backup sidecar on top of the
+# base stack. NOT validated in a live environment yet; rehearse before production.
+# For a local single-node dev stack, keep using docker-compose.yml alone.
+services:
+  # Primary: enable WAL streaming + archiving (override of the base service).
+  timescaledb:
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=4
+      - -c
+      - wal_keep_size=256MB
+      - -c
+      - hot_standby=on
+      - -c
+      - archive_mode=on
+      # archive_command must be wired to real storage (pgBackRest/wal-g) before use.
+      - -c
+      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - wal_archive:/wal-archive
+      - ./arthaai/db/init-replication.sql:/docker-entrypoint-initdb.d/02_replication.sql:ro
+
+  # Streaming standby, bootstrapped with pg_basebackup. Read-only analytics can
+  # target this to keep the primary free for writes.
+  timescaledb-replica:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: arthaai-timescaledb-replica
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PGPASSWORD: ${ARTHAAI_REPLICATION_PASSWORD:-arthaai_repl_pw}
+    volumes:
+      - timescale_replica_data:/var/lib/postgresql/data
+    command: >
+      bash -c "
+        until pg_basebackup -h timescaledb -D $$PGDATA -U replicator -Fp -Xs -P -R; do
+          echo 'waiting for primary...'; sleep 3;
+        done;
+        exec postgres -c hot_standby=on
+      "
+
+  # Nightly logical backup (portable, restores with pg_restore). Physical/PITR
+  # backups are handled by WAL archiving on the primary (see archive_command).
+  backup:
+    image: postgres:16-alpine
+    container_name: arthaai-backup
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      PGHOST: timescaledb
+      PGPASSWORD: ${ARTHAAI_TIMESCALE_PASSWORD:-arthaai_dev_pw}
+      BACKUP_DB: ${ARTHAAI_TIMESCALE_DB:-arthaai}
+      BACKUP_USER: ${ARTHAAI_TIMESCALE_USER:-arthaai}
+      BACKUP_RETAIN_DAYS: "30"
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      bash -c "
+        while true; do
+          ts=$$(date +%Y%m%dT%H%M%S);
+          pg_dump -Fc -U $$BACKUP_USER -d $$BACKUP_DB -f /backups/arthaai_$$ts.dump &&
+            echo \"backup ok: arthaai_$$ts.dump\";
+          find /backups -name 'arthaai_*.dump' -mtime +$$BACKUP_RETAIN_DAYS -delete;
+          sleep 86400;
+        done
+      "
+
+volumes:
+  wal_archive:
+  timescale_replica_data:

@@ -166,6 +166,19 @@ validates any adapter against the canonical contract (columns, sorted-unique `ts
 acceptance test a future vendor runs before `register_provider`. Schema applied via `arthaai migrate`
 (21 statements). Full suite: 479 passed, 1 health test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 infrastructure upgrades (corporate actions, issuer IDs, operational storage):** (1)
+**Corporate-action capture (ARTHA-233):** `corporate_action` table with `reference_price`; `arthaai/data/
+corporate_actions.py` (`fetch_corporate_actions` from yfinance + pure `scan_unexplained_gaps`);
+`ingest-actions` and `audit-actions` CLI. Captured 460 actions across 4 symbols; `reference_price` filled
+from the prior close in stored OHLCV. `audit-actions` flags overnight gaps > threshold with no matching
+action (e.g. AAPL 2025-04-09, a real market move, correctly surfaced). (2) **Stable instrument IDs
+(ARTHA-234):** `issuer` table (CIK PK) + `assets.issuer_cik` FK modelling issuer **1 → N** securities;
+`backfill-issuers` linked 45 assets via EDGAR; one-to-many confirmed live. (3) **Operational storage
+(ARTHA-009):** `docs/OPERATIONAL_STORAGE.md` (retention/HA/backup/verification), `arthaai/db/retention.sql`
+(idempotent daily prune job applied live — job 1000), `docker-compose.ha.yml` + `arthaai/db/init-
+replication.sql` (validated with `docker compose config`). Schema applied via `arthaai migrate` (26
+statements). Full suite: 485 passed, 1 health test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

@@ -1382,6 +1382,105 @@ def ingest_batches(
     console.print(table)
 
 
+@app.command("ingest-actions")
+def ingest_actions(
+    symbols: str = typer.Option(
+        "", help="Comma-separated symbols; default = every asset with bars."
+    ),
+) -> None:
+    """Capture corporate actions (splits/dividends) from yfinance for auditability."""
+    from arthaai.data.corporate_actions import fetch_corporate_actions
+    from arthaai.db import timescale
+
+    requested = [value.strip().upper() for value in symbols.split(",") if value.strip()]
+    if not requested:
+        requested = [
+            row["symbol"] for row in timescale.asset_coverage("1d") if row["bars"]
+        ]
+
+    total = 0
+    for sym in requested:
+        try:
+            actions = fetch_corporate_actions(sym)
+            total += timescale.upsert_corporate_actions([action.__dict__ for action in actions])
+        except Exception as exc:  # noqa: BLE001 - one bad symbol must not stop the batch
+            console.print(f"[yellow]{sym}: {exc}[/]")
+    filled = timescale.set_action_reference_prices()
+    console.print(
+        f"[green]Captured {total} corporate actions[/] across {len(requested)} symbols; "
+        f"filled {filled} reference prices from stored OHLCV."
+    )
+
+
+@app.command("audit-actions")
+def audit_actions(
+    symbol: str = typer.Option("", help="Single symbol; default = every asset with bars."),
+    threshold: float = typer.Option(0.15, help="Overnight gap threshold (fraction)."),
+    window_days: int = typer.Option(5, help="Action ex-date match window (days)."),
+    limit: int = typer.Option(3000, help="Bars to load per symbol."),
+) -> None:
+    """Flag overnight price gaps not explained by a corporate action."""
+    from arthaai.data.corporate_actions import scan_unexplained_gaps, unexplained_gaps
+    from arthaai.db import timescale
+
+    syms = (
+        [symbol.upper()]
+        if symbol
+        else [row["symbol"] for row in timescale.asset_coverage("1d") if row["bars"]]
+    )
+    table = Table(
+        title=f"Corporate-action gap audit · threshold {threshold:.0%}", show_header=True
+    )
+    for column in ("Symbol", "Gaps", "Unexplained", "Worst unexplained"):
+        table.add_column(column, justify="right" if column != "Symbol" else "left")
+
+    total_unexplained = 0
+    for sym in syms:
+        bars = timescale.load_ohlcv(sym, limit=limit)
+        actions = timescale.load_corporate_actions(sym)
+        findings = scan_unexplained_gaps(
+            bars, actions, threshold=threshold, window_days=window_days
+        )
+        unexplained = unexplained_gaps(findings)
+        total_unexplained += len(unexplained)
+        if unexplained:
+            worst = max(unexplained, key=lambda item: abs(item["change"]))
+            worst_label = f"{worst['change']:+.1%} on {worst['date']}"
+        else:
+            worst_label = "—"
+        table.add_row(sym, str(len(findings)), str(len(unexplained)), worst_label)
+
+    console.print(table)
+    console.print(
+        f"[bold]{total_unexplained}[/] unexplained gap(s) across {len(syms)} symbols."
+    )
+
+
+@app.command("backfill-issuers")
+def backfill_issuers() -> None:
+    """Link registered assets to their SEC issuer (CIK) from EDGAR's public map.
+
+    A CIK identifies a legal reporting entity, so several symbols can share one
+    (e.g. GOOG and GOOGL). Linking is many-assets-to-one-issuer by design.
+    """
+    from arthaai.data.fundamentals_pit import ticker_to_cik
+    from arthaai.db import timescale
+
+    cik_map = ticker_to_cik()
+    linked = 0
+    for sym in timescale.assets_missing_issuer():
+        cik = cik_map.get(sym.upper())
+        if not cik:
+            continue
+        timescale.upsert_issuer(cik, None)
+        timescale.link_asset_issuer(sym, cik)
+        linked += 1
+    console.print(
+        f"[green]Linked {linked} assets to issuers[/] (CIK). "
+        "One CIK may map to several tradeable symbols."
+    )
+
+
 @app.command("freeze-universe")
 def freeze_universe(
     min_bars: int = typer.Option(480, help="Minimum daily bars to include a symbol."),
