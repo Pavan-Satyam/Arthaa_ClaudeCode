@@ -21,6 +21,59 @@ all of it checks out as real, well-scoped, conservative engineering** — see pe
 
 ---
 
+## 0. Progress at a Glance
+
+**Infrastructure & engineering tickets: 77 of 87 closed**
+
+```
+████████████████████████████████████████████████████████░░░░░░░░  89%
+```
+
+| Epic | Progress | % |
+|---|---|---|
+| ARTHA-0 Foundation & Infra | `████████████████████` | 100% |
+| ARTHA-1 Interface & Ingress | `██████████████████░░` | 90% |
+| ARTHA-2 Intelligence Core | `█████████████████░░░` | 85% |
+| ARTHA-3 Oversight & Sizing | `█████████████████░░░` | 87% |
+| ARTHA-4 Action / Execution | `██████████████████░░` | 92% |
+| ARTHA-5 Cross-Cutting | `██████████████████░░` | 90% |
+| ARTHA-6 ★ Edge Criterion | `█████████████░░░░░░░` | 67% |
+
+**The number that actually defines the goal — a proven trading edge (E3):**
+
+```
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0%
+```
+
+This isn't a ticket count — it's a straight pass/fail from `arthaai promote`. It has failed on every
+run to date: single-asset (GLD), the 5-asset research diagnostic's own formal dry-run, and the 73-asset
+universe sweep. 0 for 0.
+
+**Read these two numbers together, not separately.** 89% ticket completion is real, independently
+verified engineering progress — auth, guardrails, Kelly math, data integrity, CI, observability all check
+out (§§1–2b, epics below). But it is progress on infrastructure *around* a core result that hasn't moved.
+Ticket velocity ≠ goal progress here. Treating 89% as "almost there" would itself be the misdirection.
+
+**On track:**
+- Every safety-relevant piece (5% Kelly cap, drawdown breaker, kill switch, stop-loss, audit log, auth,
+  OPA policy) is real, tested, and conservatively defaulted — nothing found this pass weakens a guardrail.
+- Data-integrity bugs (duplicate daily bars, the stale STATUS_REPORT claims, the `factor_gate` default)
+  were found and fixed/corrected rather than papered over — that's healthy process, not drift.
+- An explicit **hold-release decision is recorded** (2026-10-10): no signal is promotable, Law 3 stays
+  in force. The team knows where it stands.
+
+**Risk of misdirection, flagged now rather than later:**
+- The last two commits added portfolio Kelly, VaR/ES, correlation regime, a provider registry, per-bar
+  provenance, and seven standalone research adapters — all real, all correctly inert, **none touching E3**.
+  Scope is growing around the stalled core result faster than the core result itself is improving.
+- The one diagnostic that showed a positive edge (5 assets, Sharpe 3.5) **reversed sign** on the wider
+  73-asset universe (Sharpe −1.26) — that's a small-sample artifact, not a validated edge. Treating the
+  5-asset number as encouraging is the specific misdirection risk sitting in this repo right now.
+- **Recommendation:** the next unit of work should attack E3 directly — a real trained/weighted factor
+  combination evaluated on the full universe — before any more adjacent capability is added.
+
+---
+
 ## 1. Architecture (HLD, from `arthaai-architecture.html` verbatim — unchanged)
 
 ```
