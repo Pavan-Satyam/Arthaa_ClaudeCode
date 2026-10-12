@@ -102,6 +102,15 @@ variants on the extended sample: **all 0/73**, none passing both OOS windows on 
 result is now robust to sample length. E3 remains open; gate and promotion criteria unchanged. Full
 suite: 446 passed, 1 health test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 intermarket risk-regime update (E3, different axis):** Added `arthaai/factors/regime.py`
+(`risk_regime`, `regime_signal_map`) and exposed `--signal regime|regime_tsmom` — a market-state axis
+(SPY trend + HYG/LQD credit ratio) rather than own price, using data already in the universe (free,
+keyless, PIT-safe). Pre-registered in the protocol and evaluated on `e6468871a625ea35`: both **0/73**
+(8 symbols each passed one window). Eight pre-declared variants have now failed across two axes; no
+promotable edge in price/market data for this universe under the current criteria. Results in
+`evaluation/e3_results.md`. Full suite: 450 passed, 1 health test deselected; `compileall` clean; CI
+lint clean.
+
 ---
 
 ## 0. Next session — start here

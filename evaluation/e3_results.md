@@ -65,4 +65,24 @@ OOS windows on any symbol.** The negative result is now robust to sample length,
 short window. E3 remains open; the gate and promotion criteria are unchanged. Further progress needs a
 different data axis (alt/fundamental/news signals), not more price-signal permutations on this sample.
 
+## 2026-10-12 — Intermarket risk-regime family (different information axis)
+
+Pre-registered in the protocol §3 before running. Same frozen sample (`e6468871a625ea35`), same gate,
+`--cost-bps 10`, no save. This is a **different axis**: market state (SPY trend + HYG/LQD credit ratio),
+not the asset's own price. Inputs are already in the universe — free, keyless, PIT-safe.
+
+| Variant | Command | Result | 2/2 | 1/2 |
+|---|---|---|---|---|
+| `regime` | `--signal regime` | **0/73** | 0 | 8 |
+| `regime_tsmom` | `--signal regime_tsmom --lookback 126` | **0/73** | 0 | 8 |
+
+Raw sweeps: `evaluation/sweep10_regime.txt`, `evaluation/sweep10_regime_tsmom.txt`.
+
+**Conclusion:** the intermarket risk-regime axis does not beat buy-and-hold either. With **eight**
+pre-declared variants now failing on the extended sample across two information axes (own-price and
+market-state), the honest reading is firm: **no promotable edge is present in price/market data for this
+73-asset universe under the current criteria.** The next attempt requires a genuinely exogenous data
+axis (fundamentals, macro, news) with point-in-time handling — not more signals from the same data.
+
+
 

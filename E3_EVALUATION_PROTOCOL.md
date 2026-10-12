@@ -55,6 +55,13 @@ trail. Each family is re-run on `e6468871a625ea35` (see `evaluation/e3_results.m
      `lookback`-day return each date.
    Pre-registered variants: `tsmom` L=126; `xsmom` L=63 q=0.30; `xsmom` L=126 q=0.30.
    *(void: all 0/73 on old sample)*
+6. **Intermarket risk-regime family** — pre-registered 2026-10-12, a different
+   information axis (market state, not own price). Inputs are the SPY trend and the
+   HYG/LQD credit ratio, all already in the universe (free, keyless, PIT-safe):
+   - `regime` — long every symbol on risk-on days, flat on risk-off days.
+   - `regime_tsmom` — the regime gate applied to each symbol's own `tsmom` L=126.
+   Risk-on = SPY above its 200-day mean **and** HYG/LQD up over 63 bars. Both are
+   reported, with no selection of the best.
 
 
 ## 4. Out-of-sample protocol

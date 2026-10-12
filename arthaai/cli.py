@@ -23,7 +23,10 @@ console = Console()
 # cross-sectional composite, and "tsmom"/"xsmom" the classic momentum family
 # (ARTHA-219 / E3). All are analysis tooling and never become the live sizing
 # signal without a human decision.
-VALID_SIGNALS = ("trend", "breakout", "composite", "ic_composite", "tsmom", "xsmom")
+VALID_SIGNALS = (
+    "trend", "breakout", "composite", "ic_composite", "tsmom", "xsmom",
+    "regime", "regime_tsmom",
+)
 
 
 def _validate_signal(signal: str) -> str:
@@ -80,6 +83,12 @@ def _signal_map_for(
             lookback=lookback,
             top_quantile=top_quantile,
             limit=limit,
+        )
+    if signal in ("regime", "regime_tsmom"):
+        from arthaai.factors.regime import regime_signal_map
+
+        return regime_signal_map(
+            _expand_universe(symbols), kind=signal, lookback=lookback, limit=limit
         )
     return None
 

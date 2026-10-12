@@ -332,6 +332,14 @@ passing both OOS windows on any symbol (trend 0/73·8, breakout 0/73·4, composi
 sample length, not a short-window artifact. E3 remains open. See
 [evaluation/e3_results.md](evaluation/e3_results.md).
 
+**2026-10-12 — intermarket risk-regime axis (pre-registered):** Tested a different information axis —
+market state (SPY trend + HYG/LQD credit ratio), not own price — via `--signal regime` and
+`regime_tsmom`. Both **0/73** (8 symbols each passed a single window). **Eight** pre-declared variants
+have now failed on the extended sample across two axes (own-price and market-state); no promotable edge
+is present in price/market data for this universe under the current criteria. The next attempt needs a
+genuinely exogenous axis (fundamentals/macro/news) with point-in-time handling. E3 remains open. See
+[evaluation/e3_results.md](evaluation/e3_results.md).
+
 ---
 
 ## Epic ARTHA-0 — Foundation & Infra
