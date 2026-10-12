@@ -16,3 +16,6 @@ venv/
 
 # tool artifacts
 .yantra/
+
+# runtime caches
+.cache/

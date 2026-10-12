@@ -25,7 +25,7 @@ console = Console()
 # signal without a human decision.
 VALID_SIGNALS = (
     "trend", "breakout", "composite", "ic_composite", "tsmom", "xsmom",
-    "regime", "regime_tsmom",
+    "regime", "regime_tsmom", "value",
 )
 
 
@@ -89,6 +89,12 @@ def _signal_map_for(
 
         return regime_signal_map(
             _expand_universe(symbols), kind=signal, lookback=lookback, limit=limit
+        )
+    if signal == "value":
+        from arthaai.data.fundamentals_pit import value_signal_map
+
+        return value_signal_map(
+            _expand_universe(symbols), top_quantile=top_quantile, limit=limit
         )
     return None
 

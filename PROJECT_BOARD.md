@@ -347,17 +347,19 @@ genuinely exogenous axis (fundamentals/macro/news) with point-in-time handling. 
 [evaluation/e3_results.md](evaluation/e3_results.md).
 
 **E3 verdict (2026-10-12) — no promotable edge on available data.** The E3 campaign is closed on the
-current data. Evidence: 8 pre-declared signal variants across **two information axes** (own-price:
-trend, breakout, composite, ic_composite, tsmom, xsmom; market-state: regime, regime_tsmom), evaluated
-on a **10-year, 73-asset** frozen sample (`e6468871a625ea35`) under the unchanged gate — **every one
-0/73**, no symbol passing both OOS windows. This is robust to sample length and to signal family, and
-the protocol (no OOS tuning, pre-registration, change control) rules out the usual artifacts. The gate
-requires genuine market-timing alpha on liquid assets; the available price/market data does not contain
-it. **Recommendation: E3 is not a code problem to be solved by more signals — it is a data problem.**
-Re-scope: (1) keep Law 3 (no live money) in force; (2) treat **data procurement with point-in-time
-handling** (EDGAR fundamentals, macro, or news) as the gating prerequisite for any further E3 attempt;
-(3) redirect adjacent effort (ARTHA-412, alerting/dashboard, more adapters) until an exogenous axis is
-available. Reopening E3 requires a *new* data axis, not a new signal on this sample.
+current data. Evidence: 9 pre-declared signal variants across **three information axes** — own-price
+(trend, breakout, composite, ic_composite, tsmom, xsmom), market-state (regime, regime_tsmom), and
+**fundamental** (SEC EDGAR value/quality, PIT) — evaluated on a **10-year** sample under the unchanged
+gate; **every one failed** (own-price/market-state: 0/73 on `e6468871a625ea35`; fundamental: 0/34 on the
+equity subset), no symbol passing both OOS windows. This is robust to sample length and to signal
+family, and the protocol (no OOS tuning, pre-registration, change control) rules out the usual
+artifacts. The gate requires genuine market-timing alpha on liquid assets; the available data does not
+contain it. **Recommendation: E3 is not a code problem to be solved by more signals — it is a data
+problem.** Re-scope: (1) keep Law 3 (no live money) in force; (2) treat **further data procurement with
+point-in-time handling** (macro, news, richer fundamentals) as the gating prerequisite for any further
+E3 attempt; (3) redirect adjacent effort (ARTHA-412, alerting/dashboard, more adapters) until an
+exogenous axis with real information content is available. Reopening E3 requires a *new* data axis, not
+a new signal on this sample.
 
 ---
 

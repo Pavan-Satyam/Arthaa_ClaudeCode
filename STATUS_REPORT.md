@@ -122,6 +122,16 @@ not a signal-search problem.** Recommendation: keep Law 3 (no live money) in for
 data procurement (EDGAR/macro/news) as the gating prerequisite for any further E3 attempt; redirect
 adjacent effort until an exogenous axis exists. Full details in `evaluation/e3_results.md`.
 
+**2026-10-12 fundamental value/quality axis (SEC EDGAR, PIT):** Added `arthaai/data/fundamentals_pit.py`
+— free, keyless SEC EDGAR XBRL access with **filing-date point-in-time** availability (no look-ahead),
+cached, and injectable for tests. Exposed `--signal value`: cross-sectional z-score of book-to-price,
+earnings yield, and ROE; long the top quantile. Pre-registered and evaluated on the **equity subset**
+(33 symbols; ETFs have no fundamentals) under the unchanged gate: **0/34** (3 symbols passed one window).
+Nine pre-declared variants now fail across three information axes (own-price, market-state, fundamental).
+E3 remains closed; Law 3 stays in force. Raw sweep in `evaluation/sweep10_value.txt`; details in
+`evaluation/e3_results.md`. Full suite: 455 passed, 1 health test deselected; `compileall` clean; CI
+lint clean.
+
 ---
 
 ## 0. Next session — start here

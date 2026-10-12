@@ -84,5 +84,30 @@ market-state), the honest reading is firm: **no promotable edge is present in pr
 73-asset universe under the current criteria.** The next attempt requires a genuinely exogenous data
 axis (fundamentals, macro, news) with point-in-time handling — not more signals from the same data.
 
+## 2026-10-12 — Fundamental value/quality axis (SEC EDGAR, PIT)
+
+Pre-registered in the protocol §3 before running. A genuinely exogenous axis from SEC EDGAR's public
+XBRL API (free, keyless). Availability is the **filing date**, so signals are point-in-time. **Scope:
+the equity subset** (ETFs have no company fundamentals) — 33 symbols, so this is a *separate* sample
+from the 73-asset universe. Command:
+`promote-sweep --symbols <equities> --signal value --cost-bps 10 --no-save`.
+
+Signal `value`: cross-sectional z-score of book-to-price, earnings yield, and ROE; long the top 30%
+each date, flat otherwise.
+
+| Variant | Result | 2/2 | 1/2 |
+|---|---|---|---|
+| `value` | **0/34** (33 equities; `XAG` no data) | 0 | 3 |
+
+Raw sweep: `evaluation/sweep10_value.txt`.
+
+**Conclusion:** the fundamental value/quality axis does not beat buy-and-hold on the equity subset
+either. Single-symbol cross-check — `arthaai backtest AAPL --signal value`: edge −48.88%, Sharpe −0.77.
+
+**Nine** pre-declared variants now fail across **three** information axes (own-price, market-state,
+fundamental). The evidence is consistent and, under the protocol, decisive: the available data does not
+contain a promotable edge for this universe under the current gate.
+
+
 
 

@@ -62,6 +62,15 @@ trail. Each family is re-run on `e6468871a625ea35` (see `evaluation/e3_results.m
    - `regime_tsmom` — the regime gate applied to each symbol's own `tsmom` L=126.
    Risk-on = SPY above its 200-day mean **and** HYG/LQD up over 63 bars. Both are
    reported, with no selection of the best.
+7. **Fundamental value/quality axis** — pre-registered 2026-10-12, a genuinely
+   exogenous axis from SEC EDGAR (free, keyless). **Scope: the equity subset of the
+   frozen universe** (ETFs have no company fundamentals), declared separately as its
+   own sample. Availability is the **filing date** (`filed`), so a signal at date *t*
+   uses only facts filed on or before *t* (point-in-time; no look-ahead).
+   - Metrics: book-to-price (`StockholdersEquity / market cap`), earnings yield
+     (`NetIncomeLoss(TTM) / market cap`), ROE (`NetIncomeLoss / StockholdersEquity`).
+   - Signal `value`: cross-sectional z-score of the three metrics, long the top
+     `top_quantile` each date, flat otherwise.
 
 
 ## 4. Out-of-sample protocol
