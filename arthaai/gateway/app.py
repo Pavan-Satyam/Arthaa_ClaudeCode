@@ -98,6 +98,18 @@ def promotions(
     return {"signal": signal, "qualified": timescale.list_qualified_symbols(signal)}
 
 
+@app.get("/alerts")
+def alerts_endpoint(
+    limit: int = 20,
+    principal: Principal = Depends(require_principal),
+    _mtls: None = Depends(require_mtls),
+) -> dict:
+    """Recent in-process operational alerts (ARTHA-5), newest first."""
+    from arthaai.observability import alerts as alerts_mod
+
+    return {"alerts": alerts_mod.recent(limit)}
+
+
 class AnalyzeResponse(BaseModel):
     symbol: str
     verdict: dict

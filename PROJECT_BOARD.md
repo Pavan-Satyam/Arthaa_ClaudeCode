@@ -441,10 +441,10 @@ a *new* data axis, not a new signal on this sample.
 | ARTHA-409 | **Fill simulation (slippage, partial, rejection)** | ✅ **DONE (new)** | [execution/fills.py](arthaai/execution/fills.py) read in full — `FillModel` with slippage (bps), volume-participation-capped partial fills, seeded-RNG rejection. Defaults are a no-op (unchanged behavior unless configured), wired into `submit()` and `exit_position()`. |
 | ARTHA-410 | Daily reset of the drawdown breaker | ✅ **DONE** | `ExecutionEngine.reset_day()` now exists as an explicit method (was previously only an implicit date-compare inside `_update_breaker`); confirmed callable and audited. |
 | ARTHA-411 | Live broker adapter | ⬜ TO DO (deferred by Law 3) | Correctly not started — ARTHA-202/E3 still open, so this must wait |
-| ARTHA-412 | Script exporters | ⬜ TO DO (deferred) | Still correctly absent |
+| ARTHA-412 | Script exporters (Pine/MQL5/TDX) | ✅ **DONE (new)** | [export/scripts.py](arthaai/export/scripts.py) renders the same signal logic (trend SMA filter / Donchian breakout / tsmom) as TradingView Pine v5, MetaTrader MQL5, or TDX formulas; `arthaai export-script` writes to stdout or a file. Output convenience only — no broker contact, no edge claim. Tests: [test_script_exporters.py](tests/test_script_exporters.py). |
 | ARTHA-413 | **Research-first execution adapters** (local-LLM text-only router, Nautilus backtest engine, Alpaca **paper**-trading client) | ✅ **DONE, correctly not live-wired (new, `135f620`)** | [orchestration/execution_router.py](arthaai/orchestration/execution_router.py) read in full — not previously tracked anywhere on this board. Its system prompt explicitly bars the LLM from computing any number; `create_alpaca_paper_client` hardcodes `paper=True` so it cannot route to a live account even if invoked. Confirmed by grep: zero call sites outside its own test file (`test_openbb_execution_router.py`) — not imported by `cli.py`, the graph, or the gateway. Correctly inert; does not advance ARTHA-411, nor should it until E3 closes. |
 
-**Tier 4: 12 done / 1 to do (the other, live broker, is correctly gated).**
+**Tier 4: 13 done / 1 to do (the remaining one, the live broker ARTHA-411, is correctly gated by Law 3).**
 
 ---
 
@@ -457,8 +457,9 @@ a *new* data axis, not a new signal on this sample.
 | ARTHA-507/508 | **OpenTelemetry tracing + Prometheus metrics** | ✅ **DONE (new)** | `gateway/app.py` — `tracing.configure()`/`tracing.span()` wraps `/analyze`; a `@app.middleware("http")` hook records `HTTP_REQUESTS`/`HTTP_LATENCY` using the **matched route template**, not the raw path (correctly avoids a cardinality-explosion/DoS vector from attacker-controlled 404 paths). New `/metrics` endpoint is authenticated **and** mTLS-gated, and returns 503 (not a crash) if `prometheus-client` isn't installed. Local test for this skips without the `obs` extra — consistent, not a red flag. |
 | ARTHA-510 | Schema migration tool | ✅ **DONE** | Same as ARTHA-008 |
 | ARTHA-511 | Alerting hooks on circuit breakers / LLM calls | ✅ **DONE (new)** | `observability/alerts.py` + `resiliency/breaker.py` grew +11 lines per the d8a0306 commit; not re-read line-by-line this pass given time, but consistent with the otherwise-clean track record of this batch. |
+| ARTHA-512 | **Alert ring buffer + dashboard integration** | ✅ **DONE (new, 2026-10-12)** | [observability/alerts.py](arthaai/observability/alerts.py) keeps a bounded recent-alert buffer; `GET /alerts` (authenticated + mTLS) exposes it; the dashboard renders an "Operational alerts" panel polling every 15s. Tests: [test_alerts.py](tests/test_alerts.py) + `/alerts` cases in [test_gateway.py](tests/test_gateway.py). |
 
-**Cross-cutting: 9 done / 1 to do** (the 1 remaining — fuller alerting/dashboard integration — is genuinely minor; recorded for completeness, not re-verified line-by-line).
+**Cross-cutting: 10 done / 0 to do** (the former residual — fuller alerting/dashboard integration — is now implemented as ARTHA-512).
 
 ---
 

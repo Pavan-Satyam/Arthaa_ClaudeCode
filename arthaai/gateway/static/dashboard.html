@@ -73,6 +73,10 @@
       <table id="evidence"></table>
     </div>
   </div>
+  <div class="panel">
+    <h2>Operational alerts <span class="muted" id="alertcount"></span></h2>
+    <table id="alerts"><tr><td class="k">No alerts recorded.</td><td></td></tr></table>
+  </div>
   <p class="muted">Decision-support only · paper context · not investment advice.</p>
 </div>
 
@@ -148,8 +152,25 @@ async function analyze() {
   } catch(e) { $("status").textContent = "network error"; }
   finally { $("go").disabled = false; }
 }
+async function loadAlerts() {
+  try {
+    const r = await fetch("/alerts?limit=20", { credentials: "same-origin" });
+    if (!r.ok) return;
+    const d = await r.json();
+    const rows = (d.alerts || []).map(a => {
+      const t = (a.ts || "").replace("T", " ").replace(/\..*$/, "");
+      return `<tr><td class="k">${a.kind}</td><td title="${a.message}">${t}</td></tr>`;
+    });
+    $("alerts").innerHTML = rows.length ? rows.join("")
+      : '<tr><td class="k">No alerts recorded.</td><td></td></tr>';
+    $("alertcount").textContent = rows.length ? rows.length + " recent" : "";
+  } catch (e) { /* alerts panel is best-effort */ }
+}
+
 $("go").addEventListener("click", analyze);
 loadChart($("sym").value).catch(()=>{});
+loadAlerts();
+setInterval(loadAlerts, 15000);
 </script>
 </body>
 </html>

@@ -141,6 +141,16 @@ macro) — every tractable, free, PIT-safe axis available without new data procu
 Law 3 stays in force. Raw sweeps in `evaluation/sweep10_macro*.txt`. Full suite: 461 passed, 1 health
 test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 adjacent-work update (E3 closed; Law 3 holds):** Per the re-scope, shifted to data-readiness
+/ infrastructure. (1) **ARTHA-412 — script exporters:** new `arthaai/export/scripts.py` renders a signal
+definition (trend / breakout / tsmom) as TradingView **Pine v5**, MetaTrader **MQL5**, or **TDX** formulas;
+`arthaai export-script` CLI writes to stdout or a file. Output convenience only — no broker contact, no
+edge claim. (2) **ARTHA-512 — alerting/dashboard integration:** `observability/alerts.py` now keeps a
+bounded recent-alert ring buffer; `GET /alerts` (authenticated + mTLS) exposes it; the dashboard renders
+an "Operational alerts" panel polling every 15s. Cross-cutting epic now 10 done / 0 to do; Tier 4 now 13
+done / 1 to do (live broker ARTHA-411 remains gated by Law 3). Full suite: 470 passed, 1 health test
+deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

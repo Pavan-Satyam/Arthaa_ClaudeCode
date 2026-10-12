@@ -47,6 +47,23 @@ def test_promotions_endpoint(monkeypatch):
     assert resp.json() == {"signal": "trend", "qualified": ["GLD", "SLV"]}
 
 
+def test_alerts_requires_auth():
+    # Fresh client: an earlier test leaves the dashboard cookie on the shared one.
+    assert TestClient(app).get("/alerts").status_code == 401
+
+
+def test_alerts_endpoint_returns_recent():
+    from arthaai.observability import alerts
+
+    alerts._RECENT.clear()
+    alerts.alert("breaker", "tripped", symbol="GLD")
+    cookie = client.get("/").cookies.get("arthaai_token")
+    resp = client.get("/alerts", cookies={"arthaai_token": cookie})
+    assert resp.status_code == 200
+    kinds = [entry["kind"] for entry in resp.json()["alerts"]]
+    assert "breaker" in kinds
+
+
 def test_dashboard_sets_httponly_cookie():
     resp = client.get("/")
     assert resp.status_code == 200

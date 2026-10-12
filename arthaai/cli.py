@@ -1353,6 +1353,57 @@ def freeze_universe(
     )
 
 
+@app.command("export-script")
+def export_script(
+    symbol: str,
+    signal: str = typer.Option("trend", help="trend | breakout | tsmom"),
+    platform: str = typer.Option("pine", help="pine | mql5 | tdx"),
+    out: str = typer.Option("", help="Write to this file instead of stdout."),
+    fast: int = typer.Option(20, help="Fast SMA window (trend)."),
+    slow: int = typer.Option(50, help="Slow SMA window (trend)."),
+    long_filter: int = typer.Option(200, help="Long-term SMA filter (trend)."),
+    entry_window: int = typer.Option(20, help="Donchian entry window (breakout)."),
+    exit_window: int = typer.Option(10, help="Donchian exit window (breakout)."),
+    adx: float = typer.Option(25.0, help="ADX gate (breakout)."),
+    lookback: int = typer.Option(126, help="Trailing-return lookback (tsmom)."),
+) -> None:
+    """Export a signal definition as a Pine/MQL5/TDX script (ARTHA-412).
+
+    Output convenience only: it renders the same signal logic in a charting
+    platform's syntax. It implies no edge and contacts no broker.
+    """
+    from arthaai.export import SignalSpec, render
+
+    spec = SignalSpec(
+        symbol=symbol.strip().upper(),
+        kind=signal.strip().lower(),
+        fast=fast,
+        slow=slow,
+        long_filter=long_filter,
+        entry_window=entry_window,
+        exit_window=exit_window,
+        adx_threshold=adx,
+        lookback=lookback,
+    )
+    try:
+        text = render(spec, platform)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+
+    if out:
+        from pathlib import Path
+
+        path = Path(out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        console.print(
+            f"[green]Wrote {platform} script[/] for {spec.symbol} · {spec.kind} → {path}"
+        )
+    else:
+        console.print(text)
+
+
 @app.command("seed-secrets")
 def seed_secrets(gateway_token: str = "dev-token") -> None:
     """Write dev secrets (gateway token, ANTHROPIC_API_KEY if set) into Vault."""
