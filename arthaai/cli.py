@@ -1128,6 +1128,109 @@ def audit_history_command(
         raise typer.Exit(1)
 
 
+@app.command("backfill-metadata")
+def backfill_metadata(
+    symbols: str = typer.Option(
+        "", help="Comma-separated symbols; default = every asset missing exchange."
+    ),
+    all_assets: bool = typer.Option(
+        False, "--all", help="Refresh metadata for every registered asset."
+    ),
+) -> None:
+    """Populate exchange/asset-class metadata for registered assets via yfinance."""
+    from arthaai.data.metadata import fetch_asset_metadata
+    from arthaai.db import timescale
+
+    requested = [value.strip().upper() for value in symbols.split(",") if value.strip()]
+    if requested:
+        targets = list(dict.fromkeys(requested))
+    elif all_assets:
+        targets = timescale.list_asset_symbols()
+    else:
+        targets = timescale.assets_missing_exchange()
+
+    if not targets:
+        console.print("[green]No assets need metadata backfill.[/]")
+        return
+
+    table = Table(title=f"Metadata backfill · {len(targets)} assets", show_header=True)
+    for column in ("Symbol", "Exchange", "Class", "Name"):
+        table.add_column(column, justify="left")
+    updated = 0
+    for sym in targets:
+        try:
+            meta = fetch_asset_metadata(sym)
+            timescale.update_asset_metadata(
+                sym,
+                name=meta["name"],
+                asset_class=meta["asset_class"],
+                exchange=meta["exchange"],
+                currency=meta["currency"],
+            )
+            updated += 1
+            table.add_row(
+                sym, meta["exchange"] or "—", meta["asset_class"], str(meta["name"])[:32]
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad symbol must not stop the batch
+            table.add_row(sym, "[red]error[/]", "—", str(exc)[:32])
+    console.print(table)
+    console.print(f"[dim]Updated {updated}/{len(targets)} assets from yfinance metadata.[/]")
+
+
+@app.command("freeze-universe")
+def freeze_universe(
+    min_bars: int = typer.Option(480, help="Minimum daily bars to include a symbol."),
+    out: str = typer.Option(
+        "evaluation/frozen_universe.json", help="Manifest output path."
+    ),
+) -> None:
+    """Freeze the evaluation universe to a reproducible manifest under a declared rule.
+
+    Selection rule (declared up front, applied uniformly): a registered symbol is
+    included when it has at least ``min_bars`` daily bars and a known exchange.
+    The content hash covers only the sorted symbol list, so re-running on unchanged
+    data reproduces the same hash.
+    """
+    import hashlib
+    import json
+    from collections import Counter
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from arthaai.db import timescale
+
+    coverage = timescale.asset_coverage("1d")
+    selected = [row for row in coverage if row["bars"] >= min_bars and row["exchange"]]
+    selected.sort(key=lambda row: row["symbol"])
+    symbols = [row["symbol"] for row in selected]
+    digest = hashlib.sha256("\n".join(symbols).encode("utf-8")).hexdigest()[:16]
+
+    manifest = {
+        "rule": {
+            "min_daily_bars": min_bars,
+            "require_exchange": True,
+            "source": "registered assets in TimescaleDB (interval=1d)",
+        },
+        "count": len(symbols),
+        "by_asset_class": dict(sorted(Counter(r["asset_class"] for r in selected).items())),
+        "by_exchange": dict(sorted(Counter(r["exchange"] for r in selected).items())),
+        "symbols": symbols,
+        "symbols_sha256_16": digest,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+
+    path = Path(out)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    console.print(
+        f"[green]Froze {len(symbols)} symbols[/] (min {min_bars} bars) → {path} "
+        f"· hash {digest}"
+    )
+    console.print(
+        f"[dim]exchanges: {manifest['by_exchange']} · classes: {manifest['by_asset_class']}[/]"
+    )
+
+
 @app.command("seed-secrets")
 def seed_secrets(gateway_token: str = "dev-token") -> None:
     """Write dev secrets (gateway token, ANTHROPIC_API_KEY if set) into Vault."""

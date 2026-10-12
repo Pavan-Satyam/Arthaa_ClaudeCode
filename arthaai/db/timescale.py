@@ -31,20 +31,88 @@ def ping() -> str:
         return row[0] if row else "NOT INSTALLED"
 
 
-def ensure_asset(symbol: str, name: str | None = None, asset_class: str = "equity") -> None:
+def ensure_asset(
+    symbol: str,
+    name: str | None = None,
+    asset_class: str = "equity",
+    exchange: str | None = None,
+    currency: str | None = None,
+) -> None:
     """Register an asset if it isn't already known, so OHLCV can reference it.
 
     Lets the platform analyse any ticker, not just the seeded universe. The FK on
-    ohlcv(symbol) -> assets(symbol) requires this row to exist first.
+    ohlcv(symbol) -> assets(symbol) requires this row to exist first. Existing
+    rows are left untouched (metadata enrichment uses ``update_asset_metadata``).
     """
     symbol = symbol.upper()
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO assets (symbol, name, asset_class) VALUES (%s, %s, %s) "
-            "ON CONFLICT (symbol) DO NOTHING;",
-            (symbol, name or symbol, asset_class),
+            "INSERT INTO assets (symbol, name, asset_class, exchange, currency) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (symbol) DO NOTHING;",
+            (symbol, name or symbol, asset_class, exchange, currency or "USD"),
         )
         conn.commit()
+
+
+def update_asset_metadata(
+    symbol: str,
+    *,
+    name: str | None = None,
+    asset_class: str | None = None,
+    exchange: str | None = None,
+    currency: str | None = None,
+) -> None:
+    """Update only the asset metadata fields that are provided (None = unchanged)."""
+    assignments: list[str] = []
+    params: list = []
+    for column, value in (
+        ("name", name),
+        ("asset_class", asset_class),
+        ("exchange", exchange),
+        ("currency", currency),
+    ):
+        if value is not None:
+            assignments.append(f"{column} = %s")
+            params.append(value)
+    if not assignments:
+        return
+    params.append(symbol.upper())
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE assets SET {', '.join(assignments)} WHERE symbol = %s;", params
+        )
+        conn.commit()
+
+
+def list_asset_symbols() -> list[str]:
+    """Return every registered symbol, alphabetically."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT symbol FROM assets ORDER BY symbol;")
+        return [row[0] for row in cur.fetchall()]
+
+
+def assets_missing_exchange() -> list[str]:
+    """Return registered symbols whose exchange is NULL or empty."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol FROM assets "
+            "WHERE exchange IS NULL OR exchange = '' ORDER BY symbol;"
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def asset_coverage(interval: str = "1d") -> list[dict]:
+    """Per-symbol bar count plus asset metadata, for evaluation-universe selection."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT a.symbol, a.asset_class, a.exchange, count(o.ts) AS bars "
+            "FROM assets a "
+            "LEFT JOIN ohlcv o ON o.symbol = a.symbol AND o.interval = %s "
+            "GROUP BY a.symbol, a.asset_class, a.exchange ORDER BY a.symbol;",
+            (interval,),
+        )
+        columns = ("symbol", "asset_class", "exchange", "bars")
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
 def _canonical_ts(ts, interval: str):
