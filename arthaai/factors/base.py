@@ -415,19 +415,23 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def regression_neut(y: pd.DataFrame, x: pd.DataFrame) -> pd.DataFrame:
-    """Cross-sectional regression neutralization: residual of y on x.
+    """Cross-sectional regression neutralization: residual of y on x (with intercept).
 
-    Subtracts the OLS projection of y onto x per row.
+    Per row, regresses ``y`` on ``x`` and returns the residual ``y - a - beta*x``.
+    That residual is orthogonal to both the constant and ``x`` in each row, which
+    is the standard factor-neutralization property. ``beta`` uses consistent
+    population moments (``cov/var`` with ``ddof=0``); rows where ``x`` has zero
+    variance yield NaN.
     """
     y = _as_float(y)
     x = _as_float(x)
-    # Per-row OLS: beta = cov(x,y) / var(x), residual = y - beta * x
-    cov = y.mul(x, axis=0).mean(axis=1, skipna=True) - y.mean(axis=1, skipna=True) * x.mean(axis=1, skipna=True)
-    var_x = x.var(axis=1, ddof=1, skipna=True)
+    x_mean = x.mean(axis=1, skipna=True)
+    y_mean = y.mean(axis=1, skipna=True)
+    cov = y.mul(x, axis=0).mean(axis=1, skipna=True) - y_mean * x_mean
+    var_x = x.var(axis=1, ddof=0, skipna=True)
     beta = cov / var_x.where(var_x > 0)
-    return y.sub(beta, axis=0).mul(x * 0, axis=0)  # placeholder - needs proper impl
-    # Correct implementation:
-    # return y - beta * x  (broadcast per row)
+    intercept = y_mean - beta * x_mean
+    return y.sub(x.mul(beta, axis=0)).sub(intercept, axis=0)
 
 
 def vwap(panel: dict[str, pd.DataFrame], market: Market | str = Market.EQUITY_US) -> pd.DataFrame:

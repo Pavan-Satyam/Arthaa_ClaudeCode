@@ -179,6 +179,16 @@ action (e.g. AAPL 2025-04-09, a real market move, correctly surfaced). (2) **Sta
 replication.sql` (validated with `docker compose config`). Schema applied via `arthaai migrate` (26
 statements). Full suite: 485 passed, 1 health test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 code-audit corrections (found by reading the code, not the reports):** (1) Fixed a latent bug
+in `arthaai/factors/base.py` `regression_neut` — it ended in `y.sub(beta).mul(x * 0)` (correct line
+commented out), so the exported public primitive returned an all-zero frame and was untested. Implemented
+the intercept-aware residual `y - a - beta*x` (orthogonal to the exposure and constant); added
+`tests/test_regression_neut.py`. It had no callers, so the bug was latent. (2) Corrected the
+`security/__init__.py` docstring, which claimed "INTERFACE STUBS ONLY" even though `security/policy.py`
+consults live OPA. (3) Annotated the board: Alt_Agent is a labelled stub (correcting an overstated
+"DONE"), plus the two fixes above. Full suite: 489 passed, 1 health test deselected; `compileall` clean;
+CI lint clean.
+
 ---
 
 ## 0. Next session — start here

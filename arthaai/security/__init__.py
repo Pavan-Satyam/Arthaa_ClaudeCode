@@ -1,13 +1,15 @@
-"""Zero-trust security interfaces (blueprint §6).
+"""Zero-trust security seam (blueprint §6).
 
-INTERFACE STUBS ONLY. Production zero-trust requires infrastructure that cannot
-run meaningfully on a single dev machine — SPIFFE/SPIRE identity, HashiCorp Vault,
-OPA/Rego sidecars, mTLS via an API gateway, Kubernetes micro-segmentation. These
-functions define the seams where that enforcement plugs in and apply a permissive
-local default, so application code can already call them and be hardened later
-(deployment Sprint 5) without refactoring.
+``authorize_tool`` is **real**: it consults the live OPA server
+(``security.opa.is_allowed`` → ``policy/arthaai.rego``) and falls back to the
+in-process least-privilege map when OPA is unreachable, so enforcement never
+silently disappears. ``AgentIdentity`` carries a SPIFFE-ID string.
+
+What remains deploy-infrastructure (not app code): SPIFFE/SPIRE identity issuance,
+short-lived JWT binding, mTLS termination at the gateway, and Kubernetes
+micro-segmentation. Those plug into the same seam without refactoring callers.
 """
 
-from arthaai.security.policy import authorize_tool, AgentIdentity
+from arthaai.security.policy import AgentIdentity, authorize_tool
 
-__all__ = ["authorize_tool", "AgentIdentity"]
+__all__ = ["AgentIdentity", "authorize_tool"]
