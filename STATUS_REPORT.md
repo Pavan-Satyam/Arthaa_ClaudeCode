@@ -200,6 +200,17 @@ Confirmed the 7 data/research adapters are genuinely unwired (0 external imports
 ledger/stop path is covered by `test_ledger.py`. Full suite: 494 passed, 1 health test deselected;
 `compileall` clean; CI lint clean.
 
+**2026-10-12 execution-level audit (Kelly / execution / gateway auth):** A second audit pass that
+**executes** the safety-critical paths. **Kelly sizing** — negative discrete edge → flat (no shorting); a
+496× continuous Kelly is capped at 5%; the factor gate dampens only (×0.5 conflict, ×1.0 confirm);
+formulas exact. **Execution guardrails** — mandatory 8% stop; −20% trips the drawdown breaker; `submit`
+raises `TradingHalted` while halted; `kill_switch` flattens and `system_locked`; `unlock` → active.
+**Gateway auth** — JWT requires `exp`, static token uses constant-time compare, production fails closed.
+**No defects found** in these paths (the board's claims are accurate). One latent modelling note left
+as-is: the paper engine emits `sell` orders but `Position` stores positive quantity (no true short
+modelling); the live path never emits shorts. Full suite: 494 passed, 1 health test deselected;
+`compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

@@ -266,6 +266,32 @@ I also checked three things the author's edit claimed or added without flagging 
 
 ---
 
+## 2c. Independent code audit — 2026-10-12 (execution-level, not report-level)
+
+Ran a second audit pass that **executes** the code rather than trusting the board. Findings:
+
+- **Kelly sizing (ARTHA-301–307, 309, 311, 314): ✅ verified, no defects.** Behaviourally tested: a negative
+  discrete edge sizes to flat (no shorting); a 496× continuous Kelly cannot exceed the 5% cap
+  (`capped_by_policy=True`); the factor gate dampens only (×0.5 on conflict, ×1.0 on confirm); formulas exact
+  (`discrete(0.6,2)=0.4`, `continuous(0.10,0.04,0.04)=1.5`). No shorting path.
+- **Execution guardrails (ARTHA-405/406/407/408/409/410): ✅ verified, no defects.** Behaviourally tested: a
+  mandatory 8% stop on entry; a −20% move trips the `drawdown_breaker`; `submit` raises `TradingHalted`
+  while halted; `kill_switch` flattens and `system_locked`; `unlock` returns to `active`.
+- **Gateway auth (ARTHA-101–110): ✅ verified, no defects.** JWT requires `exp`; static token uses
+  constant-time compare; production with nothing configured fails closed (tested via
+  `test_dashboard_refuses_dev_token_in_production`).
+- **Latent modelling note (not an active bug):** `ExecutionEngine.submit` accepts `direction="bearish"` and
+  emits a `sell` order (tested in `test_execution.py`), but `Position` stores a **positive** quantity, so a
+  "short" is not truly modelled (positive qty with a stop above entry). The live path never emits shorts
+  (`asset_manager.size()` → 0 for a non-positive edge; `cli execute` guards `neutral`/`≤0`), so this is
+  latent and left as-is rather than expanding scope.
+
+**Net:** unlike the first audit pass, this pass found **no defects** in the safety-critical paths — the
+board's claims there are accurate. Two minor cosmetic items noted but not changed (mis-indented
+`kelly_fraction_used=` at `asset_manager.py:223`; `_verify_jwt` skips audience/issuer when unconfigured).
+
+---
+
 ## 3. Board Summary
 
 | Epic | Component | Done | To Do | Change |
