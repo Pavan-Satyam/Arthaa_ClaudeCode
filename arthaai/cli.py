@@ -18,6 +18,20 @@ from arthaai.config import get_settings
 app = typer.Typer(add_completion=False, help="ArthaAI multi-agent market analysis.")
 console = Console()
 
+# Signals accepted by the diagnostic backtest/promotion commands. "composite" is
+# the fixed-factor per-bar aggregate (ARTHA-219); it is analysis tooling only and
+# never becomes the live sizing signal without a human decision.
+VALID_SIGNALS = ("trend", "breakout", "composite")
+
+
+def _validate_signal(signal: str) -> str:
+    """Normalize and reject unknown signals instead of silently defaulting to trend."""
+    normalized = signal.strip().lower()
+    if normalized not in VALID_SIGNALS:
+        console.print(f"[red]--signal must be one of: {', '.join(VALID_SIGNALS)}[/]")
+        raise typer.Exit(2)
+    return normalized
+
 
 @app.command()
 def health() -> None:
@@ -181,8 +195,8 @@ def provider_status(
     ),
 ) -> None:
     """Show (or set) the stored data provider for SYMBOL."""
-    from arthaai.db import timescale
     from arthaai.data.provider import default_provider_registry
+    from arthaai.db import timescale
 
     symbol = symbol.upper()
     prefer = prefer.strip().lower()
@@ -641,7 +655,7 @@ def _promote_windows(
 @app.command()
 def promote(
     symbol: str,
-    signal: str = typer.Option("trend", help="trend | breakout"),
+    signal: str = typer.Option("trend", help="trend | breakout | composite"),
     warmup: int = 60,
     limit: int = 500,
     adx: float = typer.Option(0.0, help="ADX gate for breakout (e.g. 25)."),
@@ -665,14 +679,19 @@ def promote(
     from arthaai.db import timescale
 
     symbol = symbol.upper()
+    signal = _validate_signal(signal)
     adx_threshold = adx if signal == "breakout" else 0.0
 
     with console.status(f"[bold]promoting {symbol} · {signal}…"):
-        result = _promote_windows(
-            symbol, signal=signal, warmup=warmup, limit=limit,
-            adx_threshold=adx_threshold, cost_bps=cost_bps,
-            vol_target=vol_target, windows=windows,
-        )
+        try:
+            result = _promote_windows(
+                symbol, signal=signal, warmup=warmup, limit=limit,
+                adx_threshold=adx_threshold, cost_bps=cost_bps,
+                vol_target=vol_target, windows=windows,
+            )
+        except ValueError as exc:
+            console.print(f"[red]Promotion failed:[/] {exc}")
+            raise typer.Exit(1) from exc
     if result is None:
         console.print(
             f"[red]Not enough data / OOS windows for {symbol} "
@@ -736,7 +755,7 @@ def promote_sweep(
     symbols: str = typer.Option(
         "GLD,SLV,USO,XOM,AAPL,DBC,TSLA", help="Comma-separated universe to sweep."
     ),
-    signal: str = typer.Option("trend", help="trend | breakout"),
+    signal: str = typer.Option("trend", help="trend | breakout | composite"),
     warmup: int = 60,
     limit: int = 520,
     adx: float = typer.Option(25.0, help="ADX gate for breakout."),
@@ -748,6 +767,7 @@ def promote_sweep(
     """Sweep the promotion gate across a universe and list every qualified symbol."""
     from arthaai.db import timescale
 
+    signal = _validate_signal(signal)
     adx_threshold = adx if signal == "breakout" else 0.0
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
@@ -757,12 +777,16 @@ def promote_sweep(
 
     qualified_symbols: list[str] = []
     for sym in syms:
-        with console.status(f"[bold]promoting {sym}…"):
-            result = _promote_windows(
-                sym, signal=signal, warmup=warmup, limit=limit,
-                adx_threshold=adx_threshold, cost_bps=cost_bps,
-                vol_target=vol_target, windows=windows,
-            )
+        try:
+            with console.status(f"[bold]promoting {sym}…"):
+                result = _promote_windows(
+                    sym, signal=signal, warmup=warmup, limit=limit,
+                    adx_threshold=adx_threshold, cost_bps=cost_bps,
+                    vol_target=vol_target, windows=windows,
+                )
+        except ValueError as exc:
+            t.add_row(sym, "—", "—", "—", "—", f"[yellow]{str(exc)[:48]}[/]")
+            continue
         if result is None:
             t.add_row(sym, "—", "—", "—", "—", "[yellow]no data[/]")
             continue
@@ -797,7 +821,9 @@ def backtest(
     symbol: str,
     warmup: int = 60,
     limit: int = 500,
-    signal: str = typer.Option("trend", help="trend (SMA-cross) | breakout (Donchian 55/20)"),
+    signal: str = typer.Option(
+        "trend", help="trend (SMA-cross) | breakout (Donchian 55/20) | composite (fixed-factor mean)"
+    ),
     adx: float = typer.Option(0.0, help="ADX regime gate for breakout (e.g. 25 = only enter when trending)"),
     cost_bps: float = typer.Option(0.0, help="Round-trip friction (bps) charged on turnover."),
     vol_target: float = typer.Option(0.0, help="Annualised volatility target for sizing (0 = off)."),
@@ -805,11 +831,16 @@ def backtest(
     """Walk-forward backtest with look-ahead guards (offline evaluation)."""
     from arthaai.backtest import run_backtest
 
-    with console.status(f"[bold]backtesting {symbol.upper()}…"):
-        res = run_backtest(
-            symbol, warmup=warmup, limit=limit, signal=signal,
-            adx_threshold=adx, cost_bps=cost_bps, vol_target=vol_target,
-        )
+    signal = _validate_signal(signal)
+    try:
+        with console.status(f"[bold]backtesting {symbol.upper()}…"):
+            res = run_backtest(
+                symbol, warmup=warmup, limit=limit, signal=signal,
+                adx_threshold=adx, cost_bps=cost_bps, vol_target=vol_target,
+            )
+    except ValueError as exc:
+        console.print(f"[red]Backtest failed:[/] {exc}")
+        raise typer.Exit(1) from exc
     t = Table(title=f"Backtest · {res.symbol} · {signal}" + (f" · ADX≥{adx:g}" if adx else ""), show_header=False)
     t.add_column("k"); t.add_column("v", justify="right")
     t.add_row("bars / trades", f"{res.bars} / {res.trades}")

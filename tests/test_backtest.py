@@ -73,3 +73,28 @@ def test_composite_signal_uses_factor_series(monkeypatch):
     res = engine.run_backtest("GLD", warmup=20, limit=120, signal="composite", factor_gate=False)
     assert res.trades == 0
     assert res.long_only_return == pytest.approx(0.0)
+
+
+def test_composite_signal_unavailable_raises(monkeypatch):
+    df = _ramp_frame()
+    monkeypatch.setattr(engine.timescale, "load_ohlcv", lambda *a, **k: df)
+    import arthaai.agents.quant_agent as qa
+
+    monkeypatch.setattr(
+        qa, "factor_signal_series", lambda symbol, frame, factor_ids=None: None
+    )
+    with pytest.raises(ValueError, match="composite signal unavailable"):
+        engine.run_backtest("GLD", warmup=20, limit=120, signal="composite", factor_gate=False)
+
+
+def test_composite_signal_error_is_wrapped(monkeypatch):
+    df = _ramp_frame()
+    monkeypatch.setattr(engine.timescale, "load_ohlcv", lambda *a, **k: df)
+    import arthaai.agents.quant_agent as qa
+
+    def _boom(symbol, frame, factor_ids=None):
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr(qa, "factor_signal_series", _boom)
+    with pytest.raises(ValueError, match="composite signal unavailable"):
+        engine.run_backtest("GLD", warmup=20, limit=120, signal="composite", factor_gate=False)

@@ -1,17 +1,17 @@
 """Multi-source ingestion failover chain — LSE → yfinance → empty."""
 
+from datetime import UTC, datetime
+
 import pandas as pd
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
 
 from arthaai.data.provider import (
+    IngestResult,
     ProviderRegistry,
     fetch_ohlcv,
     ingest_resilient,
     refresh_history,
     refresh_history_batch,
-    IngestResult,
 )
 
 
@@ -48,8 +48,8 @@ class TestFetchOhlcv:
         )
         frame, source = fetch_ohlcv(
             "AAPL",
-            datetime(2025, 1, 1, tzinfo=timezone.utc),
-            datetime(2025, 2, 1, tzinfo=timezone.utc),
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 2, 1, tzinfo=UTC),
             provider="auto",
             registry=ProviderRegistry([NamedProvider("yfinance"), NamedProvider("vendor")]),
         )
@@ -78,8 +78,8 @@ class TestFetchOhlcv:
         )
         _, source = fetch_ohlcv(
             "AAPL",
-            datetime(2025, 1, 1, tzinfo=timezone.utc),
-            datetime(2025, 2, 1, tzinfo=timezone.utc),
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 2, 1, tzinfo=UTC),
             provider="yfinance",
             registry=ProviderRegistry([NamedProvider("vendor"), NamedProvider("yfinance")]),
         )
@@ -110,8 +110,8 @@ class TestFetchOhlcv:
         )
         frame, source = fetch_ohlcv(
             "AAPL",
-            datetime(2025, 1, 1, tzinfo=timezone.utc),
-            datetime(2025, 2, 1, tzinfo=timezone.utc),
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 2, 1, tzinfo=UTC),
         )
 
         assert source == "test_vendor"
@@ -126,8 +126,8 @@ class TestFetchOhlcv:
         with pytest.raises(ValueError, match="not registered"):
             fetch_ohlcv(
                 "AAPL",
-                datetime(2025, 1, 1, tzinfo=timezone.utc),
-                datetime(2025, 2, 1, tzinfo=timezone.utc),
+                datetime(2025, 1, 1, tzinfo=UTC),
+                datetime(2025, 2, 1, tzinfo=UTC),
             )
 
     def test_registry_rejects_duplicate_provider_names(self):
@@ -156,8 +156,8 @@ class TestFetchOhlcv:
 
         frame, source = fetch_ohlcv(
             "aapl",
-            datetime(2025, 1, 1, tzinfo=timezone.utc),
-            datetime(2025, 2, 1, tzinfo=timezone.utc),
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 2, 1, tzinfo=UTC),
             registry=ProviderRegistry([CustomProvider()]),
         )
 
@@ -189,8 +189,8 @@ class TestFetchOhlcv:
 
         frame, source = fetch_ohlcv(
             "AAPL",
-            datetime(2025, 1, 1, tzinfo=timezone.utc),
-            datetime(2025, 2, 1, tzinfo=timezone.utc),
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 2, 1, tzinfo=UTC),
             registry=ProviderRegistry([EmptyProvider(), SecondaryProvider()]),
         )
 
@@ -224,8 +224,8 @@ class TestFetchOhlcv:
         with pytest.raises(ConnectionError, match="chosen provider failed"):
             fetch_ohlcv(
                 "AAPL",
-                datetime(2025, 1, 1, tzinfo=timezone.utc),
-                datetime(2025, 2, 1, tzinfo=timezone.utc),
+                datetime(2025, 1, 1, tzinfo=UTC),
+                datetime(2025, 2, 1, tzinfo=UTC),
                 provider="chosen",
                 registry=ProviderRegistry([FailingProvider(), BackupProvider()]),
             )
@@ -253,8 +253,8 @@ class TestFetchOhlcv:
         with pytest.raises(RuntimeError, match="not available"):
             fetch_ohlcv(
                 "AAPL",
-                datetime(2025, 1, 1, tzinfo=timezone.utc),
-                datetime(2025, 2, 1, tzinfo=timezone.utc),
+                datetime(2025, 1, 1, tzinfo=UTC),
+                datetime(2025, 2, 1, tzinfo=UTC),
                 provider="licensed",
                 registry=ProviderRegistry([UnavailableProvider(), BackupProvider()]),
             )
@@ -273,7 +273,7 @@ class TestFetchOhlcv:
             return _empty_df()
         monkeypatch.setattr("arthaai.data.ingest._download", _yf_download)
 
-        result, provider = fetch_ohlcv("GLD", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 2, 1, tzinfo=timezone.utc))
+        result, provider = fetch_ohlcv("GLD", datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 2, 1, tzinfo=UTC))
         assert provider == "lse"
         assert len(result) == 10
         assert not yf_called  # yfinance was never called
@@ -287,7 +287,7 @@ class TestFetchOhlcv:
         monkeypatch.setattr("arthaai.data.lse.download", lambda *a, **kw: _empty_df())
         monkeypatch.setattr("arthaai.data.ingest._download", lambda *a, **kw: yf_df)
 
-        result, provider = fetch_ohlcv("USO", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 2, 1, tzinfo=timezone.utc))
+        result, provider = fetch_ohlcv("USO", datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 2, 1, tzinfo=UTC))
         assert provider == "yfinance"
         assert len(result) == 20
 
@@ -299,7 +299,7 @@ class TestFetchOhlcv:
         monkeypatch.setattr("arthaai.data.lse.download", lambda *a, **kw: _empty_df())
         monkeypatch.setattr("arthaai.data.ingest._download", lambda *a, **kw: _empty_df())
 
-        result, provider = fetch_ohlcv("FAKE", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 2, 1, tzinfo=timezone.utc))
+        result, provider = fetch_ohlcv("FAKE", datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 2, 1, tzinfo=UTC))
         assert provider == "none"
         assert result.empty
 
@@ -311,7 +311,7 @@ class TestFetchOhlcv:
         })())
         monkeypatch.setattr("arthaai.data.ingest._download", lambda *a, **kw: yf_df)
 
-        result, provider = fetch_ohlcv("GLD", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 2, 1, tzinfo=timezone.utc))
+        result, provider = fetch_ohlcv("GLD", datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 2, 1, tzinfo=UTC))
         assert provider == "yfinance"
         assert len(result) == 15
 
@@ -327,7 +327,7 @@ class TestFetchOhlcv:
         monkeypatch.setattr("arthaai.data.lse.download", _lse_error)
         monkeypatch.setattr("arthaai.data.ingest._download", lambda *a, **kw: yf_df)
 
-        result, provider = fetch_ohlcv("GLD", datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 2, 1, tzinfo=timezone.utc))
+        result, provider = fetch_ohlcv("GLD", datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 2, 1, tzinfo=UTC))
         assert provider == "yfinance"
         assert len(result) == 10
 
@@ -360,8 +360,8 @@ class TestIngestResilient:
 
     def test_incremental_returns_zero(self, monkeypatch):
         """When data is already up to date, returns 0 rows."""
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        from datetime import datetime
+        now = datetime.now(UTC)
         monkeypatch.setattr("arthaai.db.timescale.asset_meta", lambda s: {"symbol": s})
         monkeypatch.setattr("arthaai.db.timescale.latest_ts", lambda s, i: now)
         monkeypatch.setattr("arthaai.db.timescale.upsert_ohlcv", lambda s, i, d, **kwargs: len(d))

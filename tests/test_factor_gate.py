@@ -5,7 +5,6 @@ import pytest
 from arthaai.agents import asset_manager as am
 from arthaai.config import Settings
 
-
 # d_kelly = 0.55 - 0.45/1.1 = 0.1409 -> quarter-Kelly = 0.03523 (below the 5% cap)
 _LONG_QUANT = {"mu": 0.10, "variance": 0.04, "win_prob": 0.55, "win_loss_ratio": 1.1}
 

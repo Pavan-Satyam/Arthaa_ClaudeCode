@@ -51,6 +51,19 @@ Of 39,212 rows, 39,208 remain NULL/unknown rather than guessed. `provider_symbol
 security ID. Focused provenance/migration/provider tests passed; full suite: 418 passed, 1 health test
 deselected. Provenance lint/editor diagnostics pass. E3 and execution policy are unchanged.
 
+**2026-10-12 composite-signal CLI exposure update (ARTHA-219):** The backtest engine already
+supported a `composite` per-bar factor signal but no user-facing command could select it. `arthaai
+backtest`, `arthaai promote`, and `arthaai promote-sweep` now accept `--signal composite` (the fixed
+five-factor per-bar mean via `quant_agent.factor_signal_series`). A shared `_validate_signal()` helper
+normalizes the value and rejects unknown signals with exit code 2 instead of silently defaulting to
+trend. A `composite` run that cannot resolve a factor series now raises a clear `ValueError` in the
+engine instead of silently degrading to the trend signal; `backtest`/`promote` print the error and exit
+1, and `promote-sweep` records the failure for that symbol and continues. This is diagnostic/analysis
+tooling only: the default remains `trend`, live sizing is untouched, and `composite` is not wired into
+the asset manager. New `tests/test_cli_signals.py` (7 tests) covers acceptance, normalization, rejection,
+signal pass-through, and the unavailable-signal error path; `tests/test_backtest.py` adds 2 tests for the
+loud failure. Full suite: 427 passed, 1 health test deselected; `compileall` clean; CI correctness lint clean.
+
 ---
 
 ## 0. Next session — start here

@@ -113,7 +113,9 @@ def run_backtest(
         symbol: Ticker symbol.
         warmup: minimum bars before first signal.
         limit: max bars to load.
-        signal: 'trend' or 'breakout'.
+        signal: 'trend', 'breakout', or 'composite'. A 'composite' run raises
+            ``ValueError`` if no per-bar factor series can be computed, rather
+            than silently falling back to the trend signal.
         adx_threshold: ADX regime threshold for breakout signal.
         data_slice: optional slice into the loaded OHLCV (e.g. for OOS runs).
         cost_bps: round-trip friction in basis points charged on position
@@ -149,12 +151,15 @@ def run_backtest(
 
         try:
             s = factor_signal_series(symbol, df)
-            if data_slice is not None and s is not None:
-                s = s.iloc[data_slice]
-            if s is not None:
-                ext = pd.Series(np.asarray(s, dtype=float)).reset_index(drop=True)
-        except Exception:
-            ext = None
+        except Exception as exc:
+            raise ValueError(f"composite signal unavailable for {symbol}: {exc}") from exc
+        if s is None or len(s) == 0:
+            raise ValueError(
+                f"composite signal unavailable for {symbol}: no factor series computed"
+            )
+        if data_slice is not None:
+            s = s.iloc[data_slice]
+        ext = pd.Series(np.asarray(s, dtype=float)).reset_index(drop=True)
 
     close = df["close"].reset_index(drop=True)
     high = df["high"].reset_index(drop=True)
