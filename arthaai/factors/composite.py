@@ -176,6 +176,44 @@ def ic_weighted_composite(
     return composite.where(denominator > 0.0, equal_weight)
 
 
+def per_symbol_signals(composite: pd.DataFrame) -> dict[str, pd.Series]:
+    """Split a wide composite into per-symbol date-indexed signal series.
+
+    Each returned series is causal (its value at date *t* uses only bars <= *t*)
+    and can be fed to ``run_backtest(signal_series=...)``.
+    """
+    if composite is None or composite.empty:
+        return {}
+    return {str(sym): composite[sym].dropna() for sym in composite.columns}
+
+
+def cross_sectional_signal_map(
+    symbols: list[str],
+    *,
+    limit: int = 520,
+    ic_weighted: bool = True,
+    factor_ids: list[str] | None = None,
+    registry=None,
+) -> dict[str, pd.Series]:
+    """Build per-symbol causal signal series from the universe cross-section.
+
+    Loads the universe panel from TimescaleDB, computes the (IC-weighted)
+    cross-sectional composite over that universe, and returns one date-indexed
+    series per symbol. This is the bridge that lets the per-symbol E3 gate test a
+    cross-sectional signal it could not otherwise see.
+    """
+    from arthaai.factors.panel import build_panel_from_symbols
+
+    panel = build_panel_from_symbols(list(symbols), limit=limit)
+    if not panel:
+        return {}
+    if ic_weighted:
+        composite = ic_weighted_composite(panel, factor_ids, registry)
+    else:
+        composite = composite_from_panel(panel, factor_ids, registry)
+    return per_symbol_signals(composite)
+
+
 def rank_assets(composite: pd.DataFrame, date=None) -> pd.Series:
     """Rank symbols by composite score at ``date`` (default: last date).
 

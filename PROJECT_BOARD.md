@@ -303,6 +303,16 @@ limitations are in [E3_EVALUATION_PROTOCOL.md](E3_EVALUATION_PROTOCOL.md). Confi
 signal runs end-to-end on real data (GLD: edge −17.88%, Sharpe 0.89 — still no edge). No promotion
 criterion was changed and E3 remains open.
 
+**2026-10-12 — IC-weighted composite evaluated on the frozen sample (step 2/3):** Wired the
+walk-forward IC-weighted cross-sectional composite (`ic_weighted_composite`, embargo-safe: expanding
+mean rank-IC weights lagged past the graded forward return) as a selectable signal (`--signal
+ic_composite`) that feeds the per-symbol E3 gate via the engine's `signal_series`. Built the
+cross-section over the frozen 73-symbol universe and ran `promote-sweep --cost-bps 10`. **Verdict:
+0/73 qualified** — 6 symbols passed a single window, **none passed both**; no promotion rows written.
+GLD single-symbol cross-check: edge −23.91%, Sharpe 0.72. Recorded in
+[evaluation/e3_results.md](evaluation/e3_results.md). The weighted factor composite does not beat
+buy-and-hold on this sample; E3 stays open and the gate is unchanged.
+
 ---
 
 ## Epic ARTHA-0 — Foundation & Infra

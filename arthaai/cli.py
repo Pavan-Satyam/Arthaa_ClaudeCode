@@ -19,9 +19,10 @@ app = typer.Typer(add_completion=False, help="ArthaAI multi-agent market analysi
 console = Console()
 
 # Signals accepted by the diagnostic backtest/promotion commands. "composite" is
-# the fixed-factor per-bar aggregate (ARTHA-219); it is analysis tooling only and
-# never becomes the live sizing signal without a human decision.
-VALID_SIGNALS = ("trend", "breakout", "composite")
+# the fixed-factor per-bar aggregate and "ic_composite" the walk-forward
+# IC-weighted cross-sectional composite (ARTHA-219); both are analysis tooling
+# and never become the live sizing signal without a human decision.
+VALID_SIGNALS = ("trend", "breakout", "composite", "ic_composite")
 
 
 def _validate_signal(signal: str) -> str:
@@ -31,6 +32,26 @@ def _validate_signal(signal: str) -> str:
         console.print(f"[red]--signal must be one of: {', '.join(VALID_SIGNALS)}[/]")
         raise typer.Exit(2)
     return normalized
+
+
+def _ic_composite_signal_map(symbols: list[str], *, limit: int) -> dict:
+    """Build per-symbol causal signal series for the IC-weighted composite.
+
+    The cross-section is the requested symbols plus the frozen evaluation
+    universe (so a single-symbol run still sees a real cross-section).
+    """
+    from arthaai.eval.universe import load_frozen_universe
+    from arthaai.factors.composite import cross_sectional_signal_map
+
+    universe = list(dict.fromkeys(s.upper() for s in symbols))
+    try:
+        frozen = load_frozen_universe()
+    except (OSError, ValueError):
+        frozen = []
+    for sym in frozen:
+        if sym not in universe:
+            universe.append(sym)
+    return cross_sectional_signal_map(universe, limit=limit)
 
 
 @app.command()
@@ -618,19 +639,30 @@ def paper_sim(
 def _promote_windows(
     symbol: str, *, signal: str, warmup: int, limit: int,
     adx_threshold: float, cost_bps: float, vol_target: float, windows: int,
+    signal_map: dict | None = None,
 ):
     """Evaluate the promotion gate across non-overlapping OOS windows.
 
-    Returns ``(qualified, note, rows, evals)`` or ``None`` when there is not
-    enough history. Shared by `promote` and `promote-sweep`.
+    ``signal_map`` supplies precomputed per-symbol causal signal series for
+    cross-sectional signals (``ic_composite``); when set, it overrides the
+    per-symbol ``signal``/``adx_threshold``. Returns ``(qualified, note, rows,
+    evals)`` or ``None`` when there is not enough history. Shared by `promote`
+    and `promote-sweep`.
     """
     from arthaai.backtest import oos_windows, run_backtest
     from arthaai.backtest.promotion import combine_windows, evaluate_promotion
     from arthaai.db import timescale
+    from arthaai.factors.panel import align_signal_to_ohlcv
 
     df = timescale.load_ohlcv(symbol, limit=limit)
     if len(df) < warmup + 10:
         return None
+    series = None
+    if signal_map is not None:
+        column = signal_map.get(symbol)
+        if column is None:
+            return None
+        series = align_signal_to_ohlcv(column, symbol, limit=limit)
     wins = oos_windows(len(df), oos_pct=0.30, count=windows, min_bars=warmup + 10)
     if not wins:
         return None
@@ -639,7 +671,7 @@ def _promote_windows(
         res = run_backtest(
             symbol, warmup=warmup, limit=limit, signal=signal,
             adx_threshold=adx_threshold, data_slice=slice(lo, hi),
-            cost_bps=cost_bps, vol_target=vol_target,
+            cost_bps=cost_bps, vol_target=vol_target, signal_series=series,
         )
         ev = evaluate_promotion(
             oos_sharpe=res.sharpe, oos_max_drawdown=res.max_drawdown,
@@ -655,7 +687,7 @@ def _promote_windows(
 @app.command()
 def promote(
     symbol: str,
-    signal: str = typer.Option("trend", help="trend | breakout | composite"),
+    signal: str = typer.Option("trend", help="trend | breakout | composite | ic_composite"),
     warmup: int = 60,
     limit: int = 500,
     adx: float = typer.Option(0.0, help="ADX gate for breakout (e.g. 25)."),
@@ -682,12 +714,17 @@ def promote(
     signal = _validate_signal(signal)
     adx_threshold = adx if signal == "breakout" else 0.0
 
+    signal_map = None
+    if signal == "ic_composite":
+        with console.status("[bold]computing IC-weighted cross-sectional signal…"):
+            signal_map = _ic_composite_signal_map([symbol], limit=limit)
+
     with console.status(f"[bold]promoting {symbol} · {signal}…"):
         try:
             result = _promote_windows(
                 symbol, signal=signal, warmup=warmup, limit=limit,
                 adx_threshold=adx_threshold, cost_bps=cost_bps,
-                vol_target=vol_target, windows=windows,
+                vol_target=vol_target, windows=windows, signal_map=signal_map,
             )
         except ValueError as exc:
             console.print(f"[red]Promotion failed:[/] {exc}")
@@ -755,7 +792,7 @@ def promote_sweep(
     symbols: str = typer.Option(
         "GLD,SLV,USO,XOM,AAPL,DBC,TSLA", help="Comma-separated universe to sweep."
     ),
-    signal: str = typer.Option("trend", help="trend | breakout | composite"),
+    signal: str = typer.Option("trend", help="trend | breakout | composite | ic_composite"),
     warmup: int = 60,
     limit: int = 520,
     adx: float = typer.Option(25.0, help="ADX gate for breakout."),
@@ -771,6 +808,11 @@ def promote_sweep(
     adx_threshold = adx if signal == "breakout" else 0.0
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
+    signal_map = None
+    if signal == "ic_composite":
+        with console.status(f"[bold]computing IC-weighted signal over {len(syms)} symbols…"):
+            signal_map = _ic_composite_signal_map(syms, limit=limit)
+
     t = Table(title=f"Promotion sweep · {signal} · {len(syms)} symbols")
     for col in ("Symbol", "Windows", "Sharpe", "Long-only", "B&H", "Verdict"):
         t.add_column(col, justify="right" if col not in ("Symbol", "Verdict") else "left")
@@ -782,7 +824,7 @@ def promote_sweep(
                 result = _promote_windows(
                     sym, signal=signal, warmup=warmup, limit=limit,
                     adx_threshold=adx_threshold, cost_bps=cost_bps,
-                    vol_target=vol_target, windows=windows,
+                    vol_target=vol_target, windows=windows, signal_map=signal_map,
                 )
         except ValueError as exc:
             t.add_row(sym, "—", "—", "—", "—", f"[yellow]{str(exc)[:48]}[/]")
@@ -822,7 +864,9 @@ def backtest(
     warmup: int = 60,
     limit: int = 500,
     signal: str = typer.Option(
-        "trend", help="trend (SMA-cross) | breakout (Donchian 55/20) | composite (fixed-factor mean)"
+        "trend",
+        help="trend (SMA-cross) | breakout (Donchian 55/20) | composite (fixed-factor mean) "
+        "| ic_composite (walk-forward IC-weighted cross-sectional)",
     ),
     adx: float = typer.Option(0.0, help="ADX regime gate for breakout (e.g. 25 = only enter when trending)"),
     cost_bps: float = typer.Option(0.0, help="Round-trip friction (bps) charged on turnover."),
@@ -832,11 +876,23 @@ def backtest(
     from arthaai.backtest import run_backtest
 
     signal = _validate_signal(signal)
+    signal_series = None
+    if signal == "ic_composite":
+        from arthaai.factors.panel import align_signal_to_ohlcv
+
+        with console.status("[bold]computing IC-weighted cross-sectional signal…"):
+            signal_map = _ic_composite_signal_map([symbol], limit=limit)
+        column = signal_map.get(symbol.upper())
+        if column is None:
+            console.print(f"[red]ic_composite unavailable for {symbol.upper()}[/]")
+            raise typer.Exit(1)
+        signal_series = align_signal_to_ohlcv(column, symbol.upper(), limit=limit)
     try:
         with console.status(f"[bold]backtesting {symbol.upper()}…"):
             res = run_backtest(
                 symbol, warmup=warmup, limit=limit, signal=signal,
                 adx_threshold=adx, cost_bps=cost_bps, vol_target=vol_target,
+                signal_series=signal_series,
             )
     except ValueError as exc:
         console.print(f"[red]Backtest failed:[/] {exc}")

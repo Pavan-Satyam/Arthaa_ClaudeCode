@@ -17,6 +17,23 @@ from __future__ import annotations
 import pandas as pd
 
 
+def normalize_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Copy of an OHLCV frame with a normalized daily DatetimeIndex.
+
+    Applies the same normalization ``build_panel`` uses per symbol (UTC midnight,
+    sorted, deduped keeping the last bar) so a cross-sectional signal can be
+    aligned to the exact rows a backtest loads.
+    """
+    d = df.copy()
+    if "ts" in d.columns:
+        d = d.set_index("ts")
+    d.index = pd.to_datetime(d.index, utc=True, errors="coerce")
+    d = d[~d.index.isna()]
+    d = d.sort_index()
+    d.index = d.index.normalize()
+    return d[~d.index.duplicated(keep="last")]
+
+
 def build_panel(
     data_map: dict[str, pd.DataFrame],
     extra_columns: list[str] | None = None,
@@ -40,16 +57,7 @@ def build_panel(
     # Normalize each symbol's DataFrame
     normalized: dict[str, pd.DataFrame] = {}
     for symbol, df in data_map.items():
-        d = df.copy()
-        if "ts" in d.columns:
-            d = d.set_index("ts")
-        d.index = pd.to_datetime(d.index, utc=True, errors="coerce")
-        d = d[~d.index.isna()]
-        d = d.sort_index()
-        # Collapse to one bar per calendar day (defensive: legacy ingests stored
-        # two timestamps per day, which breaks cross-sectional date alignment).
-        d.index = d.index.normalize()
-        d = d[~d.index.duplicated(keep="last")]
+        d = normalize_ohlcv_frame(df)
         # Derive standard columns that many Zoo factors require.
         if "vwap" not in d.columns and {"high", "low", "close"}.issubset(d.columns):
             d["vwap"] = (d["high"] + d["low"] + d["close"]) / 3.0
@@ -108,6 +116,25 @@ def build_panel_from_symbols(
         return {}
 
     return build_panel(data_map)
+
+
+def align_signal_to_ohlcv(
+    series: pd.Series,
+    symbol: str,
+    *,
+    limit: int = 1000,
+) -> pd.Series:
+    """Reindex a date-indexed signal series to the rows a backtest will load.
+
+    ``run_backtest`` loads OHLCV by ``symbol``/``limit`` and consumes the signal
+    positionally, so the series must be reindexed to that frame's normalized
+    dates and reset to a 0..n-1 index.
+    """
+    from arthaai.db import timescale
+
+    df = timescale.load_ohlcv(symbol, limit=limit)
+    dates = normalize_ohlcv_frame(df).index
+    return series.reindex(dates).reset_index(drop=True)
 
 
 def compute_forward_returns(

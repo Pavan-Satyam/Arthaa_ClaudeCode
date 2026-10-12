@@ -75,6 +75,16 @@ sample (`evaluation/frozen_universe.json`, hash `f1f17e20c26d6eea`). Verified th
 end-to-end on real data (GLD: edge −17.88%, Sharpe 0.89 — still no edge). No promotion criterion changed;
 E3 remains open. Full suite: 432 passed, 1 health test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 IC-weighted composite evaluation update (E3 step 2/3):** Wired the walk-forward IC-weighted
+cross-sectional composite as a selectable signal (`--signal ic_composite`) on `backtest`, `promote`, and
+`promote-sweep`. Added `factors.composite.per_symbol_signals` / `cross_sectional_signal_map`,
+`factors.panel.normalize_ohlcv_frame` / `align_signal_to_ohlcv`, and `eval/universe.load_frozen_universe`;
+the gate feeds each symbol's causal series through the engine's `signal_series`. Evaluated on the frozen
+73-symbol universe with `promote-sweep --cost-bps 10`: **0/73 qualified** (6 symbols passed one window,
+none passed both; no promotion rows written). GLD cross-check: edge −23.91%, Sharpe 0.72. Result recorded
+in `evaluation/e3_results.md`. E3 remains open; the gate and promotion criteria are unchanged. Full suite:
+440 passed, 1 health test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here
