@@ -150,9 +150,13 @@ def _weighted_score(state: dict) -> tuple[float, list[str]]:
         signals.append((news["avg_sentiment"], 0.30))
         notes.append(f"news sentiment {news['label']} ({news['avg_sentiment']:+.2f})")
     alt = state.get("alt", {})
-    if alt.get("available"):
+    if alt.get("available") and not alt.get("stub"):
         signals.append((alt["physical_score"], 0.25))
         notes.append(f"physical/alt signal {alt['physical_score']:+.2f}")
+    elif alt.get("available"):
+        # Synthetic/stub alt data (ARTHA-213a) is context only: it must not drive
+        # the verdict — and therefore must not reach sizing through confidence.
+        notes.append("physical/alt signal present but stubbed (not weighted)")
     corr = state.get("correlation", {})
     if corr.get("available"):
         # Risk context, not a directional signal: no weight, just a note.

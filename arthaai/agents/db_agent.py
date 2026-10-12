@@ -4,16 +4,23 @@ Pulls OHLCV from TimescaleDB and derives deterministic technical indicators. No
 LLM math. Operates under its SPIFFE identity and least-privilege tool scope.
 
 Signal selection: ADX regime decides which signal class is active. In trending
-markets (ADX≥25) the Donchian breakout system is used — it has real risk-
-adjusted edge on trending assets (GLD Sharpe 1.28, SLV 1.29). In choppy or
+markets (ADX≥25) the Donchian breakout system (55/20) is used; in choppy or
 weak-trend markets the multi-timeframe trend filter is used, as breakout bleeds
 in sideways conditions.
+
+Neither class has cleared the E3 promotion gate — on the frozen universe no
+variant passes both OOS windows (see PROJECT_BOARD.md / E3_EVALUATION_PROTOCOL.md).
+Do not read edge into this selector's output.
 """
 
 from __future__ import annotations
 
 from arthaai.agents import indicators
-from arthaai.agents.indicators import BREAKOUT_ADX_THRESHOLD, BREAKOUT_ENTRY_WINDOW, BREAKOUT_EXIT_WINDOW
+from arthaai.agents.indicators import (
+    BREAKOUT_ADX_THRESHOLD,
+    BREAKOUT_ENTRY_WINDOW,
+    BREAKOUT_EXIT_WINDOW,
+)
 from arthaai.db import timescale
 from arthaai.security import AgentIdentity, authorize_tool
 
@@ -44,7 +51,7 @@ def run(symbol: str) -> dict:
 
     return {
         "available": True,
-        "bars": int(len(df)),
+        "bars": len(df),
         "last_close": round(float(close.iloc[-1]), 4),
         "sma20": indicators.sma(close, 20),
         "sma50": indicators.sma(close, 50),

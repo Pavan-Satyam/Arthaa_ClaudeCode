@@ -211,6 +211,18 @@ as-is: the paper engine emits `sell` orders but `Position` stores positive quant
 modelling); the live path never emits shorts. Full suite: 494 passed, 1 health test deselected;
 `compileall` clean; CI lint clean.
 
+**2026-10-12 agent/graph-layer audit:** Audited the least-covered paths by reading + executing. **DB_Agent**
+signal selector (ADX≥25 → Donchian 55/20, else trend) is correct, and the backtest passes the same 55/20
+windows (no live/backtest mismatch). **Master LLM** provider chain with per-dependency circuit breaker and
+offline fallback is correct. **News_Agent** degrades to a neutral fallback through the breaker; **graph**
+fan-out/converge topology is correct. **Two findings fixed:** (1) `db_agent`'s docstring claimed breakout
+"has real risk-adjusted edge (GLD Sharpe 1.28, SLV 1.29)" — contradicted by E3; removed. (2) The
+synthetic **Alt_Agent stub was being weighted 0.25 into the offline verdict** (and included in the LLM
+prompt), and the verdict confidence feeds sizing — it flipped a neutral verdict to bullish. Corrected my
+earlier board claim; `master_llm._weighted_score` now **excludes `stub` signals** from the blend
+(context-only note), with `test_llm_alt_stub.py`. Full suite: 498 passed, 1 health test deselected;
+`compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here
