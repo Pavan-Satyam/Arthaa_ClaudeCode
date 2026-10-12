@@ -64,6 +64,17 @@ the asset manager. New `tests/test_cli_signals.py` (7 tests) covers acceptance, 
 signal pass-through, and the unavailable-signal error path; `tests/test_backtest.py` adds 2 tests for the
 loud failure. Full suite: 427 passed, 1 health test deselected; `compileall` clean; CI correctness lint clean.
 
+**2026-10-12 evaluation-sample freeze update:** Added `arthaai/data/metadata.py` (normalizes yfinance
+exchange codes/names; fetches name/asset-class/exchange/currency with an injectable factory for tests)
+and extended `timescale` with `ensure_asset(exchange=, currency=)`, `update_asset_metadata`,
+`list_asset_symbols`, `assets_missing_exchange`, and `asset_coverage`. New CLI commands:
+`backfill-metadata` (populated exchange for the universe — 74/75 assets now carry one — and corrected 36
+ETFs previously mislabeled `equity`) and `freeze-universe` (emits a reproducible universe manifest with a
+content hash). Declared [E3_EVALUATION_PROTOCOL.md](E3_EVALUATION_PROTOCOL.md) and froze the 73-symbol
+sample (`evaluation/frozen_universe.json`, hash `f1f17e20c26d6eea`). Verified the `composite` signal runs
+end-to-end on real data (GLD: edge −17.88%, Sharpe 0.89 — still no edge). No promotion criterion changed;
+E3 remains open. Full suite: 432 passed, 1 health test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

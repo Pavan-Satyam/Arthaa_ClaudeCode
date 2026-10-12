@@ -293,6 +293,16 @@ ticket gating all of Tier 4's live-money work.
 windows, both must pass). The remaining gap is the signal itself needing real edge — exactly what SPEC.md
 originally called for a "tabular model," not a hand-picked 5-factor unweighted mean (see ARTHA-219 note).
 
+**2026-10-12 — evaluation sample frozen (prerequisite for the next attempt):** Added asset-metadata
+enrichment and a reproducible sample freeze before any further signal result is produced.
+`arthaai backfill-metadata` populated exchange (74/75 assets now carry one) and corrected ETF/equity
+classes (36 ETFs were mislabeled `equity`). `arthaai freeze-universe` emits
+[evaluation/frozen_universe.json](evaluation/frozen_universe.json): **73 symbols** (≥480 daily bars,
+known exchange), content hash **`f1f17e20c26d6eea`**. The declared protocol, pass criteria, and
+limitations are in [E3_EVALUATION_PROTOCOL.md](E3_EVALUATION_PROTOCOL.md). Confirmed the `composite`
+signal runs end-to-end on real data (GLD: edge −17.88%, Sharpe 0.89 — still no edge). No promotion
+criterion was changed and E3 remains open.
+
 ---
 
 ## Epic ARTHA-0 — Foundation & Infra
