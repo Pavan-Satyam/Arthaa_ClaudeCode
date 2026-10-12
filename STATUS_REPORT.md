@@ -85,6 +85,15 @@ none passed both; no promotion rows written). GLD cross-check: edge −23.91%, S
 in `evaluation/e3_results.md`. E3 remains open; the gate and promotion criteria are unchanged. Full suite:
 440 passed, 1 health test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 classic momentum family update (E3, pre-registered):** Added `arthaai/factors/momentum.py`
+(`tsmom` time-series momentum, `xsmom` cross-sectional momentum) and exposed `--signal tsmom|xsmom` with
+`--lookback`/`--top-quantile` on `backtest`/`promote`/`promote-sweep` via a shared `_signal_map_for`
+dispatcher. Three variants were pre-declared in the protocol and all reported on the frozen hash
+`f1f17e20c26d6eea`: `tsmom` L=126 → **0/73**, `xsmom` L=63 q=0.30 → **0/73**, `xsmom` L=126 q=0.30 →
+**0/73** (6/3/4 symbols passed one window, none passed both). Five pre-declared signal families now
+evaluated on this sample with no promoter. Results in `evaluation/e3_results.md`. Full suite: 446 passed,
+1 health test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

@@ -39,8 +39,15 @@ Evaluated through the **unchanged** promotion gate, one at a time:
 1. `trend` — multi-timeframe SMA filter (baseline).
 2. `breakout` — Donchian 55/20, ADX-gated (ADX ≥ 25).
 3. `composite` — fixed five-factor per-bar mean (diagnostic; ARTHA-219).
-4. *(next)* a **walk-forward IC-weighted factor composite** — weights fitted only on
-   data strictly before each OOS window.
+4. `ic_composite` — walk-forward IC-weighted factor composite (weights fitted only
+   on data strictly before each OOS window). **Result: 0/73 (2026-10-12).**
+5. **Classic momentum family** — pre-registered 2026-10-12, evaluated on the same
+   frozen hash. Low-parameter, textbook signals (not alpha-zoo combinations):
+   - `tsmom` — time-series momentum: long when trailing `lookback`-day return > 0.
+   - `xsmom` — cross-sectional momentum: long the top `top_quantile` of trailing
+     `lookback`-day return each date.
+   Pre-registered variants: `tsmom` L=126; `xsmom` L=63 q=0.30; `xsmom` L=126 q=0.30.
+   All three are reported, with no selection of the best.
 
 ## 4. Out-of-sample protocol
 

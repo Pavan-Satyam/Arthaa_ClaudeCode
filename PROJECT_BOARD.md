@@ -313,6 +313,15 @@ GLD single-symbol cross-check: edge −23.91%, Sharpe 0.72. Recorded in
 [evaluation/e3_results.md](evaluation/e3_results.md). The weighted factor composite does not beat
 buy-and-hold on this sample; E3 stays open and the gate is unchanged.
 
+**2026-10-12 — classic momentum family evaluated (pre-registered):** Added `tsmom` (time-series
+momentum) and `xsmom` (cross-sectional momentum) as selectable signals (`--signal tsmom|xsmom`,
+`--lookback`, `--top-quantile`). Three variants were pre-declared in the protocol and all reported:
+`tsmom` L=126 → **0/73**, `xsmom` L=63 q=0.30 → **0/73**, `xsmom` L=126 q=0.30 → **0/73** (6/3/4 symbols
+passed a single window; none passed both). Five pre-declared signal families (trend, breakout,
+composite, ic_composite, momentum) have now been evaluated on the frozen hash `f1f17e20c26d6eea` and
+none clears the gate. E3 remains open; no criterion was changed. See
+[evaluation/e3_results.md](evaluation/e3_results.md).
+
 ---
 
 ## Epic ARTHA-0 — Foundation & Infra

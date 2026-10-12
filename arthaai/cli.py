@@ -19,10 +19,11 @@ app = typer.Typer(add_completion=False, help="ArthaAI multi-agent market analysi
 console = Console()
 
 # Signals accepted by the diagnostic backtest/promotion commands. "composite" is
-# the fixed-factor per-bar aggregate and "ic_composite" the walk-forward
-# IC-weighted cross-sectional composite (ARTHA-219); both are analysis tooling
-# and never become the live sizing signal without a human decision.
-VALID_SIGNALS = ("trend", "breakout", "composite", "ic_composite")
+# the fixed-factor per-bar aggregate, "ic_composite" the walk-forward IC-weighted
+# cross-sectional composite, and "tsmom"/"xsmom" the classic momentum family
+# (ARTHA-219 / E3). All are analysis tooling and never become the live sizing
+# signal without a human decision.
+VALID_SIGNALS = ("trend", "breakout", "composite", "ic_composite", "tsmom", "xsmom")
 
 
 def _validate_signal(signal: str) -> str:
@@ -34,14 +35,9 @@ def _validate_signal(signal: str) -> str:
     return normalized
 
 
-def _ic_composite_signal_map(symbols: list[str], *, limit: int) -> dict:
-    """Build per-symbol causal signal series for the IC-weighted composite.
-
-    The cross-section is the requested symbols plus the frozen evaluation
-    universe (so a single-symbol run still sees a real cross-section).
-    """
+def _expand_universe(symbols: list[str]) -> list[str]:
+    """Requested symbols plus the frozen evaluation universe (deduped, upper-cased)."""
     from arthaai.eval.universe import load_frozen_universe
-    from arthaai.factors.composite import cross_sectional_signal_map
 
     universe = list(dict.fromkeys(s.upper() for s in symbols))
     try:
@@ -51,7 +47,41 @@ def _ic_composite_signal_map(symbols: list[str], *, limit: int) -> dict:
     for sym in frozen:
         if sym not in universe:
             universe.append(sym)
-    return cross_sectional_signal_map(universe, limit=limit)
+    return universe
+
+
+def _signal_map_for(
+    signal: str,
+    symbols: list[str],
+    *,
+    limit: int,
+    lookback: int = 126,
+    top_quantile: float = 0.30,
+) -> dict | None:
+    """Build per-symbol causal series for cross-sectional/panel signals, else None.
+
+    Cross-sectional signals (``ic_composite``, ``xsmom``) see the frozen universe
+    so a single-symbol run still has a real cross-section; ``tsmom`` is per-symbol.
+    """
+    if signal == "ic_composite":
+        from arthaai.factors.composite import cross_sectional_signal_map
+
+        return cross_sectional_signal_map(_expand_universe(symbols), limit=limit)
+    if signal == "tsmom":
+        from arthaai.factors.momentum import momentum_signal_map
+
+        return momentum_signal_map(symbols, kind="tsmom", lookback=lookback, limit=limit)
+    if signal == "xsmom":
+        from arthaai.factors.momentum import momentum_signal_map
+
+        return momentum_signal_map(
+            _expand_universe(symbols),
+            kind="xsmom",
+            lookback=lookback,
+            top_quantile=top_quantile,
+            limit=limit,
+        )
+    return None
 
 
 @app.command()
@@ -687,13 +717,15 @@ def _promote_windows(
 @app.command()
 def promote(
     symbol: str,
-    signal: str = typer.Option("trend", help="trend | breakout | composite | ic_composite"),
+    signal: str = typer.Option("trend", help="trend | breakout | composite | ic_composite | tsmom | xsmom"),
     warmup: int = 60,
     limit: int = 500,
     adx: float = typer.Option(0.0, help="ADX gate for breakout (e.g. 25)."),
     cost_bps: float = typer.Option(0.0, help="Round-trip friction (bps) charged on turnover."),
     vol_target: float = typer.Option(0.0, help="Annualised volatility target (0 = off)."),
     windows: int = typer.Option(2, help="Non-overlapping OOS windows; ALL must pass."),
+    lookback: int = typer.Option(126, help="Trailing-return lookback (bars) for tsmom/xsmom."),
+    top_quantile: float = typer.Option(0.30, help="Long top fraction of the universe for xsmom."),
     dry_run: bool = typer.Option(False, help="Show results without saving to DB."),
     save: bool = typer.Option(True, help="Save promotion result to DB."),
 ) -> None:
@@ -714,10 +746,9 @@ def promote(
     signal = _validate_signal(signal)
     adx_threshold = adx if signal == "breakout" else 0.0
 
-    signal_map = None
-    if signal == "ic_composite":
-        with console.status("[bold]computing IC-weighted cross-sectional signal…"):
-            signal_map = _ic_composite_signal_map([symbol], limit=limit)
+    signal_map = _signal_map_for(
+        signal, [symbol], limit=limit, lookback=lookback, top_quantile=top_quantile
+    )
 
     with console.status(f"[bold]promoting {symbol} · {signal}…"):
         try:
@@ -792,13 +823,15 @@ def promote_sweep(
     symbols: str = typer.Option(
         "GLD,SLV,USO,XOM,AAPL,DBC,TSLA", help="Comma-separated universe to sweep."
     ),
-    signal: str = typer.Option("trend", help="trend | breakout | composite | ic_composite"),
+    signal: str = typer.Option("trend", help="trend | breakout | composite | ic_composite | tsmom | xsmom"),
     warmup: int = 60,
     limit: int = 520,
     adx: float = typer.Option(25.0, help="ADX gate for breakout."),
     cost_bps: float = typer.Option(10.0, help="Round-trip friction (bps) charged on turnover."),
     vol_target: float = typer.Option(0.0, help="Annualised volatility target (0 = off)."),
     windows: int = typer.Option(2, help="Non-overlapping OOS windows; ALL must pass."),
+    lookback: int = typer.Option(126, help="Trailing-return lookback (bars) for tsmom/xsmom."),
+    top_quantile: float = typer.Option(0.30, help="Long top fraction of the universe for xsmom."),
     save: bool = typer.Option(True, help="Persist each result to the DB."),
 ) -> None:
     """Sweep the promotion gate across a universe and list every qualified symbol."""
@@ -809,9 +842,11 @@ def promote_sweep(
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
     signal_map = None
-    if signal == "ic_composite":
-        with console.status(f"[bold]computing IC-weighted signal over {len(syms)} symbols…"):
-            signal_map = _ic_composite_signal_map(syms, limit=limit)
+    if signal in ("ic_composite", "tsmom", "xsmom"):
+        with console.status(f"[bold]computing {signal} signal over {len(syms)} symbols…"):
+            signal_map = _signal_map_for(
+                signal, syms, limit=limit, lookback=lookback, top_quantile=top_quantile
+            )
 
     t = Table(title=f"Promotion sweep · {signal} · {len(syms)} symbols")
     for col in ("Symbol", "Windows", "Sharpe", "Long-only", "B&H", "Verdict"):
@@ -866,25 +901,29 @@ def backtest(
     signal: str = typer.Option(
         "trend",
         help="trend (SMA-cross) | breakout (Donchian 55/20) | composite (fixed-factor mean) "
-        "| ic_composite (walk-forward IC-weighted cross-sectional)",
+        "| ic_composite (IC-weighted cross-sectional) | tsmom | xsmom (classic momentum)",
     ),
     adx: float = typer.Option(0.0, help="ADX regime gate for breakout (e.g. 25 = only enter when trending)"),
     cost_bps: float = typer.Option(0.0, help="Round-trip friction (bps) charged on turnover."),
     vol_target: float = typer.Option(0.0, help="Annualised volatility target for sizing (0 = off)."),
+    lookback: int = typer.Option(126, help="Trailing-return lookback (bars) for tsmom/xsmom."),
+    top_quantile: float = typer.Option(0.30, help="Long top fraction of the universe for xsmom."),
 ) -> None:
     """Walk-forward backtest with look-ahead guards (offline evaluation)."""
     from arthaai.backtest import run_backtest
 
     signal = _validate_signal(signal)
     signal_series = None
-    if signal == "ic_composite":
+    if signal in ("ic_composite", "tsmom", "xsmom"):
         from arthaai.factors.panel import align_signal_to_ohlcv
 
-        with console.status("[bold]computing IC-weighted cross-sectional signal…"):
-            signal_map = _ic_composite_signal_map([symbol], limit=limit)
+        with console.status(f"[bold]computing {signal} signal…"):
+            signal_map = _signal_map_for(
+                signal, [symbol], limit=limit, lookback=lookback, top_quantile=top_quantile
+            )
         column = signal_map.get(symbol.upper())
         if column is None:
-            console.print(f"[red]ic_composite unavailable for {symbol.upper()}[/]")
+            console.print(f"[red]{signal} unavailable for {symbol.upper()}[/]")
             raise typer.Exit(1)
         signal_series = align_signal_to_ohlcv(column, symbol.upper(), limit=limit)
     try:

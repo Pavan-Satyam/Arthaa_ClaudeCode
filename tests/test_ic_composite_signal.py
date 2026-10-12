@@ -89,22 +89,23 @@ def test_promote_cli_passes_ic_composite_signal(monkeypatch):
         qualified = False
         reason = "test"
 
-    def fake_map(symbols, *, limit):
+    def fake_map(signal, symbols, *, limit, lookback=126, top_quantile=0.30):
         captured["symbols"] = symbols
+        captured["signal"] = signal
         return {"GLD": pd.Series([1.0] * 200)}
 
     def fake_promote_windows(symbol, *, signal, signal_map=None, **kwargs):
-        captured["signal"] = signal
+        captured["passed_signal"] = signal
         captured["signal_map"] = signal_map
         return False, "note", [(200, 350, _result(), _Eval())], [_Eval()]
 
-    monkeypatch.setattr(cli, "_ic_composite_signal_map", fake_map)
+    monkeypatch.setattr(cli, "_signal_map_for", fake_map)
     monkeypatch.setattr(cli, "_promote_windows", fake_promote_windows)
     result = CliRunner().invoke(
         cli.app, ["promote", "GLD", "--signal", "ic_composite", "--dry-run"]
     )
     assert result.exit_code == 0, result.output
-    assert captured["signal"] == "ic_composite"
+    assert captured["passed_signal"] == "ic_composite"
     assert captured["signal_map"] is not None
 
 

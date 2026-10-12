@@ -19,3 +19,23 @@ Per-symbol window passes: 2/73 symbols passed a single window (BITO, CRM, EWJ, P
 Single-symbol cross-check — `arthaai backtest GLD --signal ic_composite`: edge **−23.91%**, Sharpe **0.72**.
 
 **Conclusion:** the walk-forward IC-weighted composite does **not** beat buy-and-hold on the frozen sample. E3 remains open. No promotion criterion was changed. This is a negative result by the declared protocol, not a tuning opportunity — any further attempt must be a *different, pre-declared* signal family, evaluated on the same frozen hash.
+
+## 2026-10-12 — Classic momentum family (tsmom / xsmom)
+
+Pre-registered in [E3_EVALUATION_PROTOCOL.md](../E3_EVALUATION_PROTOCOL.md) §3 before running.
+Same frozen sample (hash `f1f17e20c26d6eea`, 73 symbols), same gate, `--cost-bps 10`, no save.
+
+| Variant | Command | Result | 1-window passes |
+|---|---|---|---|
+| `tsmom` L=126 | `promote-sweep --signal tsmom --lookback 126` | **0/73** | 6 |
+| `xsmom` L=63 q=0.30 | `promote-sweep --signal xsmom --lookback 63 --top-quantile 0.30` | **0/73** | 3 |
+| `xsmom` L=126 q=0.30 | `promote-sweep --signal xsmom --lookback 126 --top-quantile 0.30` | **0/73** | 4 |
+
+Raw sweep tables: `evaluation/sweep_tsmom_126.txt`, `sweep_xsmom_63.txt`, `sweep_xsmom_126.txt`.
+
+**Conclusion:** none of the three pre-registered momentum variants beat buy-and-hold on the frozen
+sample (no symbol passed both OOS windows). Reported in full, with no selection of the best. E3 remains
+open. Five pre-declared signal families (trend, breakout, composite, ic_composite, momentum) have now
+been evaluated on this sample and none clears the gate — the strongest honest reading is that this
+~2-year, 73-asset sample offers no promotable edge under the current criteria.
+
