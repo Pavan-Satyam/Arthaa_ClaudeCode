@@ -108,6 +108,25 @@ either. Single-symbol cross-check — `arthaai backtest AAPL --signal value`: ed
 fundamental). The evidence is consistent and, under the protocol, decisive: the available data does not
 contain a promotable edge for this universe under the current gate.
 
+## 2026-10-12 — Macro term-spread axis (FRED T10Y2Y, keyless)
+
+Pre-registered in the protocol §3 before running. Market-wide macro axis from the US 10y-2y treasury
+spread (FRED `T10Y2Y`, keyless CSV; market data, non-revised → PIT-safe). Same frozen 73-symbol sample
+(`e6468871a625ea35`), same gate, `--cost-bps 10`, no save.
+
+| Variant | Command | Result | 2/2 | 1/2 |
+|---|---|---|---|---|
+| `macro` | `--signal macro` | **0/73** | 0 | 8 |
+| `macro_tsmom` | `--signal macro_tsmom --lookback 126` | **0/73** | 0 | 8 |
+
+Raw sweeps: `evaluation/sweep10_macro.txt`, `evaluation/sweep10_macro_tsmom.txt`.
+
+**Conclusion:** the macro term-spread axis does not beat buy-and-hold either. **Eleven** pre-declared
+variants have now failed across **four** information axes (own-price, market-state, fundamental, macro).
+Every tractable, free, point-in-time-safe axis available without new data procurement has been tested and
+none clears the gate. The conclusion recorded above stands and is now exhaustive for the data at hand.
+
+
 
 
 

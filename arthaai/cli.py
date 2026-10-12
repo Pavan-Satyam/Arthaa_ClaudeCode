@@ -25,7 +25,7 @@ console = Console()
 # signal without a human decision.
 VALID_SIGNALS = (
     "trend", "breakout", "composite", "ic_composite", "tsmom", "xsmom",
-    "regime", "regime_tsmom", "value",
+    "regime", "regime_tsmom", "value", "macro", "macro_tsmom",
 )
 
 
@@ -95,6 +95,12 @@ def _signal_map_for(
 
         return value_signal_map(
             _expand_universe(symbols), top_quantile=top_quantile, limit=limit
+        )
+    if signal in ("macro", "macro_tsmom"):
+        from arthaai.factors.macro_regime import macro_signal_map
+
+        return macro_signal_map(
+            _expand_universe(symbols), kind=signal, lookback=lookback, limit=limit
         )
     return None
 

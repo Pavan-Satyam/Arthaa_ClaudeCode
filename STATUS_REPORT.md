@@ -132,6 +132,15 @@ E3 remains closed; Law 3 stays in force. Raw sweep in `evaluation/sweep10_value.
 `evaluation/e3_results.md`. Full suite: 455 passed, 1 health test deselected; `compileall` clean; CI
 lint clean.
 
+**2026-10-12 macro term-spread axis (FRED, keyless):** Added `arthaai/data/macro_series.py` (keyless FRED
+CSV fetch, cached) and `arthaai/factors/macro_regime.py` (`macro`, `macro_tsmom` from the 10y-2y spread
+`T10Y2Y`; market data, non-revised → PIT-safe). Exposed `--signal macro|macro_tsmom`. Pre-registered and
+evaluated on the frozen 73-symbol sample: both **0/73** (8 symbols each passed one window). Eleven
+pre-declared variants now fail across four information axes (own-price, market-state, fundamental,
+macro) — every tractable, free, PIT-safe axis available without new data procurement. E3 remains closed;
+Law 3 stays in force. Raw sweeps in `evaluation/sweep10_macro*.txt`. Full suite: 461 passed, 1 health
+test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

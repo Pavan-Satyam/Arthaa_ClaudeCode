@@ -71,6 +71,12 @@ trail. Each family is re-run on `e6468871a625ea35` (see `evaluation/e3_results.m
      (`NetIncomeLoss(TTM) / market cap`), ROE (`NetIncomeLoss / StockholdersEquity`).
    - Signal `value`: cross-sectional z-score of the three metrics, long the top
      `top_quantile` each date, flat otherwise.
+8. **Macro term-spread axis** — pre-registered 2026-10-12, market-wide macro from the
+   US 10y-2y treasury spread (FRED `T10Y2Y`, keyless CSV; market data, non-revised →
+   PIT-safe). Applies to all 73 symbols.
+   - `macro` — long every symbol when the spread > 0 (expansion), flat when inverted.
+   - `macro_tsmom` — the macro gate applied to each symbol's own `tsmom` L=126.
+   Both are reported, with no selection of the best.
 
 
 ## 4. Out-of-sample protocol
