@@ -102,16 +102,101 @@ def assets_missing_exchange() -> list[str]:
 
 
 def asset_coverage(interval: str = "1d") -> list[dict]:
-    """Per-symbol bar count plus asset metadata, for evaluation-universe selection."""
+    """Per-symbol bar count, first/last bar, and asset metadata (universe selection)."""
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT a.symbol, a.asset_class, a.exchange, count(o.ts) AS bars "
+            "SELECT a.symbol, a.asset_class, a.exchange, count(o.ts) AS bars, "
+            "min(o.ts) AS first, max(o.ts) AS last "
             "FROM assets a "
             "LEFT JOIN ohlcv o ON o.symbol = a.symbol AND o.interval = %s "
             "GROUP BY a.symbol, a.asset_class, a.exchange ORDER BY a.symbol;",
             (interval,),
         )
-        columns = ("symbol", "asset_class", "exchange", "bars")
+        columns = ("symbol", "asset_class", "exchange", "bars", "first", "last")
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def upsert_membership(rows: list[dict]) -> int:
+    """Insert/refresh point-in-time membership windows; returns rows written."""
+    if not rows:
+        return 0
+    with connection() as conn, conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                "INSERT INTO universe_membership (symbol, valid_from, valid_to, source) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (symbol, valid_from) DO UPDATE SET "
+                "valid_to = EXCLUDED.valid_to, source = EXCLUDED.source, recorded_at = now();",
+                (
+                    str(row["symbol"]).upper(),
+                    row["valid_from"],
+                    row.get("valid_to"),
+                    row.get("source", "unknown"),
+                ),
+            )
+        conn.commit()
+    return len(rows)
+
+
+def load_membership() -> list[dict]:
+    """Every membership window with its asset class, ordered by symbol."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.symbol, a.asset_class, m.valid_from, m.valid_to, m.source "
+            "FROM universe_membership m JOIN assets a ON a.symbol = m.symbol "
+            "ORDER BY m.symbol;"
+        )
+        columns = ("symbol", "asset_class", "valid_from", "valid_to", "source")
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def universe_as_of(as_of, asset_class: str | None = None) -> list[str]:
+    """Symbols whose listing window covers ``as_of`` (optional asset-class filter)."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT m.symbol FROM universe_membership m "
+            "JOIN assets a ON a.symbol = m.symbol "
+            "WHERE m.valid_from <= %s::timestamptz "
+            "AND (m.valid_to IS NULL OR m.valid_to >= %s::timestamptz) "
+            "AND (%s::text IS NULL OR a.asset_class = %s::text) ORDER BY m.symbol;",
+            (as_of, as_of, asset_class, asset_class),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def record_ingest_batch(
+    symbol: str,
+    interval: str,
+    provider: str | None,
+    *,
+    rows_written: int | None = None,
+    status: str = "ok",
+    error: str | None = None,
+) -> None:
+    """Record one ingestion/refresh call for auditability (best-effort seam)."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingest_batch "
+            "(symbol, interval, provider, finished_at, rows_written, status, error) "
+            "VALUES (%s, %s, %s, now(), %s, %s, %s);",
+            (symbol.upper(), interval, provider, rows_written, status, error),
+        )
+        conn.commit()
+
+
+def recent_ingest_batches(limit: int = 20) -> list[dict]:
+    """Most recent ingestion batches, newest first (audit view)."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT batch_id, symbol, interval, provider, started_at, finished_at, "
+            "rows_written, status, error FROM ingest_batch "
+            "ORDER BY started_at DESC LIMIT %s;",
+            (limit,),
+        )
+        columns = (
+            "batch_id", "symbol", "interval", "provider",
+            "started_at", "finished_at", "rows_written", "status", "error",
+        )
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 

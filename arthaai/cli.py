@@ -816,6 +816,18 @@ def promote(
         title="Promotion result", border_style=border,
     ))
 
+    # Operational/monitoring alert only — never an execution trigger.
+    from arthaai.observability import alerts
+
+    alerts.alert(
+        "promotion",
+        f"{symbol} {signal} {'qualified' if qualified else 'rejected'}",
+        symbol=symbol,
+        signal=signal,
+        qualified=qualified,
+        sharpe=round(res.sharpe, 3),
+    )
+
     if save and not dry_run:
         try:
             timescale.upsert_signal_promotion(
@@ -911,6 +923,17 @@ def promote_sweep(
     console.print(t)
     console.print(
         f"[bold]{len(qualified_symbols)}[/] qualified: {qualified_symbols or 'none'}"
+    )
+
+    # Operational/monitoring alert only — never an execution trigger.
+    from arthaai.observability import alerts
+
+    alerts.alert(
+        "promotion_sweep",
+        f"{len(qualified_symbols)}/{len(syms)} qualified",
+        signal=signal,
+        qualified=len(qualified_symbols),
+        universe=len(syms),
     )
 
 
@@ -1293,19 +1316,89 @@ def backfill_metadata(
     console.print(f"[dim]Updated {updated}/{len(targets)} assets from yfinance metadata.[/]")
 
 
+@app.command("backfill-membership")
+def backfill_membership() -> None:
+    """Derive point-in-time membership windows from OHLCV coverage.
+
+    A conservative floor absent a vendor security master: ``valid_from`` = first
+    observed bar, ``valid_to`` = last observed bar (so a still-listed name covers
+    up to now). Real delisted-securities history must come from a vendor and can
+    be written into the same table with its own ``source``.
+    """
+    from arthaai.data.membership import derive_membership
+    from arthaai.db import timescale
+
+    coverage = timescale.asset_coverage("1d")
+    windows = [window.__dict__ for window in derive_membership(coverage)]
+    written = timescale.upsert_membership(windows)
+    console.print(
+        f"[green]Wrote {written} membership windows[/] from OHLCV coverage "
+        "(source=ohlcv_coverage)."
+    )
+    console.print(
+        "[dim]Absent a vendor master, valid_to = last observed bar; still-listed "
+        "names cover up to now.[/]"
+    )
+
+
+@app.command("universe-as-of")
+def universe_as_of(
+    as_of: str = typer.Option(..., help="ISO date (YYYY-MM-DD)."),
+    asset_class: str = typer.Option("", help="Optional asset-class filter."),
+) -> None:
+    """List point-in-time universe members as of a date (survivorship-safe)."""
+    from arthaai.db import timescale
+
+    members = timescale.universe_as_of(as_of, asset_class or None)
+    label = f"{len(members)} members as of {as_of}"
+    if asset_class:
+        label += f" · {asset_class}"
+    console.print(f"[green]{label}[/]")
+    if members:
+        console.print("[dim]" + ", ".join(members) + "[/]")
+
+
+@app.command("ingest-batches")
+def ingest_batches(
+    limit: int = typer.Option(20, help="How many recent batches to show."),
+) -> None:
+    """Show recent ingestion batches (data-lineage auditability view)."""
+    from arthaai.db import timescale
+
+    rows = timescale.recent_ingest_batches(limit)
+    table = Table(title=f"Recent ingest batches · {len(rows)}", show_header=True)
+    for column in ("Symbol", "Interval", "Provider", "Rows", "Status", "Finished"):
+        table.add_column(column, justify="right" if column == "Rows" else "left")
+    for row in rows:
+        rows_written = row.get("rows_written")
+        table.add_row(
+            str(row["symbol"]),
+            str(row["interval"]),
+            str(row.get("provider") or "—"),
+            str(rows_written) if rows_written is not None else "—",
+            str(row.get("status") or "—"),
+            str(row.get("finished_at") or "")[:19],
+        )
+    console.print(table)
+
+
 @app.command("freeze-universe")
 def freeze_universe(
     min_bars: int = typer.Option(480, help="Minimum daily bars to include a symbol."),
     out: str = typer.Option(
         "evaluation/frozen_universe.json", help="Manifest output path."
     ),
+    as_of: str = typer.Option(
+        "", help="Restrict to point-in-time members as of this ISO date (YYYY-MM-DD)."
+    ),
 ) -> None:
     """Freeze the evaluation universe to a reproducible manifest under a declared rule.
 
     Selection rule (declared up front, applied uniformly): a registered symbol is
     included when it has at least ``min_bars`` daily bars and a known exchange.
-    The content hash covers only the sorted symbol list, so re-running on unchanged
-    data reproduces the same hash.
+    With ``--as-of``, it is further restricted to symbols whose listing window
+    covers that date (survivorship-safe). The hash covers the sorted symbol list
+    and each symbol's bar count, so any change to the sample yields a new hash.
     """
     import hashlib
     import json
@@ -1317,6 +1410,23 @@ def freeze_universe(
 
     coverage = timescale.asset_coverage("1d")
     selected = [row for row in coverage if row["bars"] >= min_bars and row["exchange"]]
+
+    membership_source = None
+    if as_of:
+        members = set(timescale.universe_as_of(as_of))
+        if not members:
+            console.print(
+                "[red]No membership windows found.[/] Run `arthaai backfill-membership` "
+                "first (or load a vendor security master)."
+            )
+            raise typer.Exit(1)
+        before = len(selected)
+        selected = [row for row in selected if row["symbol"] in members]
+        membership_source = "universe_membership"
+        console.print(
+            f"[dim]as-of {as_of}: {len(selected)}/{before} symbols are PIT members.[/]"
+        )
+
     selected.sort(key=lambda row: row["symbol"])
     symbols = [row["symbol"] for row in selected]
     bar_counts = {row["symbol"]: int(row["bars"]) for row in selected}
@@ -1330,6 +1440,8 @@ def freeze_universe(
             "min_daily_bars": min_bars,
             "require_exchange": True,
             "source": "registered assets in TimescaleDB (interval=1d)",
+            "as_of": as_of or None,
+            "membership_source": membership_source,
         },
         "count": len(symbols),
         "total_bars": sum(bar_counts.values()),

@@ -33,6 +33,8 @@ import arthaai.config
 from arthaai.db import timescale
 
 _log = logging.getLogger("arthaai.data.provider")
+
+_log = logging.getLogger("arthaai.data.provider")
 _OHLCV_COLUMNS = ["ts", "open", "high", "low", "close", "volume"]
 _CUSTOM_PROVIDERS: dict[str, OHLCVProvider] = {}
 
@@ -256,6 +258,14 @@ def refresh_history(
 
     if rows.empty:
         _record_provider(symbol, used)
+        _record_ingest_batch(symbol, timeframe, used, 0, status="empty")
+        _alert(
+            "data_empty",
+            f"{symbol}: provider {used} returned no rows",
+            symbol=symbol,
+            provider=used,
+            interval=timeframe,
+        )
         return IngestResult(rows=0, provider=used, symbol=symbol, incremental=False)
 
     written = timescale.upsert_ohlcv(
@@ -267,6 +277,7 @@ def refresh_history(
         provider_symbol=active_registry.provider_symbol(used, symbol),
     )
     _record_provider(symbol, used)
+    _record_ingest_batch(symbol, timeframe, used, written)
     from arthaai.data import ingest as yf_ingest_mod
 
     yf_ingest_mod._publish_event(symbol, written)
@@ -356,6 +367,28 @@ def _record_provider(symbol: str, used: str) -> None:
         timescale.record_ingest_provider(symbol, used)
     except Exception:
         pass
+
+
+def _record_ingest_batch(
+    symbol: str, interval: str, provider: str, written: int, *, status: str = "ok"
+) -> None:
+    """Record one ingest/refresh call for auditability. Best-effort: never fatal."""
+    try:
+        timescale.record_ingest_batch(
+            symbol, interval, provider, rows_written=written, status=status
+        )
+    except Exception as exc:  # noqa: BLE001 - audit must never break ingestion
+        _log.debug("ingest batch audit failed: %s", exc)
+
+
+def _alert(kind: str, message: str, **fields) -> None:
+    """Emit an operational/monitoring alert. Best-effort: never fatal."""
+    try:
+        from arthaai.observability import alerts
+
+        alerts.alert(kind, message, **fields)
+    except Exception as exc:  # noqa: BLE001 - alerting must never break ingestion
+        _log.debug("operational alert failed: %s", exc)
 
 
 def ingest_resilient(

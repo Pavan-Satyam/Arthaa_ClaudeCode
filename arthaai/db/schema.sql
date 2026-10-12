@@ -70,3 +70,35 @@ CREATE INDEX IF NOT EXISTS signal_promotion_qualified_idx ON signal_promotion (q
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS preferred_provider TEXT;
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_provider    TEXT;
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS last_ingest_at  TIMESTAMPTZ;
+
+-- Point-in-time universe membership (survivorship / selection-bias control).
+-- A security is a member over [valid_from, valid_to); valid_to NULL = still listed.
+-- Populated from a governed security master, or (absent a vendor) derived from
+-- observed OHLCV coverage as a conservative floor. Consumers query membership
+-- as of a date, so a backtest never sees a not-yet-listed or already-delisted name.
+CREATE TABLE IF NOT EXISTS universe_membership (
+    symbol      TEXT        NOT NULL REFERENCES assets(symbol),
+    valid_from  TIMESTAMPTZ NOT NULL,
+    valid_to    TIMESTAMPTZ,
+    source      TEXT        NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, valid_from)
+);
+CREATE INDEX IF NOT EXISTS universe_membership_window_idx
+    ON universe_membership (valid_from, valid_to);
+
+-- Ingestion batch audit: one row per ingest/refresh call (auditability seam).
+CREATE TABLE IF NOT EXISTS ingest_batch (
+    batch_id     BIGSERIAL   PRIMARY KEY,
+    symbol       TEXT        NOT NULL,
+    interval     TEXT        NOT NULL,
+    provider     TEXT,
+    started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at  TIMESTAMPTZ,
+    rows_written INTEGER,
+    status       TEXT        NOT NULL DEFAULT 'running',  -- running | ok | empty | error
+    error        TEXT
+);
+CREATE INDEX IF NOT EXISTS ingest_batch_symbol_idx
+    ON ingest_batch (symbol, started_at DESC);
+

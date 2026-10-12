@@ -151,6 +151,19 @@ an "Operational alerts" panel polling every 15s. Cross-cutting epic now 10 done 
 done / 1 to do (live broker ARTHA-411 remains gated by Law 3). Full suite: 470 passed, 1 health test
 deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 data-readiness update (PIT constituents, lineage, alert wiring):** (1) **Point-in-time
+universe membership (ARTHA-230):** `universe_membership` table + pure logic in `arthaai/data/membership.py`
+(`derive_membership`, `members_as_of`) + `timescale.universe_as_of`; CLI `backfill-membership` (derives
+listing windows from OHLCV coverage as a conservative floor) and `universe-as-of`; `freeze-universe
+--as-of DATE` restricts to PIT members and records `membership_source` in the manifest. Live: 71 members
+at 2018-01-01 vs 73 today. Delisted/global history still needs a vendor master. (2) **Ingestion-batch
+audit (ARTHA-231):** `ingest_batch` table + `timescale.record_ingest_batch/recent_ingest_batches`; CLI
+`ingest-batches`; `refresh_history` records every call (best-effort) and emits a `data_empty` alert on an
+empty fetch. (3) **Operational alert wiring (ARTHA-513):** `promote`/`promote-sweep` emit operational
+alerts; surfaced on `/alerts` and the dashboard — strictly observability, not execution triggers. Schema
+applied via `arthaai migrate` (21 statements). Full suite: 475 passed, 1 health test deselected;
+`compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here
