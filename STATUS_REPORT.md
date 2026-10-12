@@ -1,6 +1,6 @@
 # ArthaAI — Architecture Status Report
 
-*Last revised: 2026-10-11 · version 0.1.0 · branch `feat/arthaai-core`*
+*Last revised: 2026-10-12 · version 0.1.0 · branch `feat/arthaai-core` (HEAD `95771f8`)*
 
 ArthaAI is a zero-trust multi-agent LLM framework for equities & commodities analysis.
 The deterministic quant layer computes every number; the LLM only synthesises and
@@ -9,11 +9,28 @@ claim below was read out of the repository, and the verification results in
 [§8](#8-verification-log-live) were produced against the running Docker stack.
 
 **How to read this:** each tier separates *what's implemented* from *what's missing*,
-and marks verified vs. unverified. The single most important number in the whole
-system is **E3** — whether a signal beats buy-and-hold out-of-sample. It still
-**fails** after four signal families were tested to exhaustion ([§8.3](#83-e3--the-edge-gate--fails)),
-and the failure now exposes a **criterion mismatch** for cross-sectional signals
-([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)).
+and marks verified vs. unverified. The single most important number is **E3** — whether a
+signal beats buy-and-hold out-of-sample. It **fails**: **11 pre-declared variants across 4
+information axes**, on a **10-year, 73-asset** frozen sample, all **0 qualified**
+([§8.3](#83-e3--the-edge-gate--fails)). E3 is a **data problem, not a signal-search problem**
+— verdict and evidence in [evaluation/e3_results.md](evaluation/e3_results.md).
+
+**Accuracy note (2026-10-12):** this revision reconciles the report against the code after
+**three independent audit passes** (details in [§10](#10-known-issues--defects)). The audits
+found and fixed a latent all-zero factor primitive (`regression_neut`), a factor-registry
+validation gap, and a synthetic-alt data leak into the verdict; they also corrected
+overstated docstrings (`db_agent`, `security/__init__`). Numbers below are the current code
+state.
+
+**Recent work (2026-10-12), newest first:** E3 evaluation protocol + frozen sample
+(`evaluation/frozen_universe.json`, hash `e6468871a625ea35`, 10-year 73-asset); 11 signal
+variants evaluated across own-price / market-state / fundamental / macro axes (all fail);
+data-readiness (PIT universe membership, ingest-batch audit, provider adapter contract,
+corporate-action capture with `reference_price`, issuer/CIK IDs, operational-storage doc +
+HA/backup compose); ARTHA-412 script exporters (Pine/MQL5/TDX); ARTHA-512/513 alerting +
+dashboard; three audit passes. Full per-commit detail is in git history (`5f0b2cb`→`95771f8`).
+A chronological session log follows immediately below.
+
 
 **2026-10-11 implementation and verification update:** Added `refresh_history()` and
 `refresh_history_batch()` in `arthaai/data/provider.py`, `refresh-history` and `refresh-universe` CLI
@@ -237,34 +254,38 @@ Full suite: 498 passed, 1 health test deselected; `compileall` clean; CI lint cl
 
 ## 0. Next session — start here
 
-**State (2026-10-04, end of session):**
-- Branch `feat/arthaai-core` — **all work committed and pushed** to `origin/feat/arthaai-core` (HEAD `af8bc89`); working tree clean, 0 ahead / 0 behind.
-- Last full run: **353 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean. GitHub CI wired to install `.[dev,obs,auth]`.
-- Docker stack was up (TimescaleDB/Qdrant/OPA/Vault/Redpanda); `LSE_API_KEY` present in `.env`. OHLCV loaded for ~45 symbols.
-- **Decision recorded (2026-10-10): hold release.** No market-neutral criterion is approved; E3 remains failed and Law 3 remains in force. The factor-gate default is now off, with explicit `ARTHAAI_FACTOR_GATE=true` opt-in.
+**State (2026-10-12):**
+- Branch `feat/arthaai-core` — **all work committed and pushed** to `origin/feat/arthaai-core` (HEAD `95771f8`); working tree clean, 0 ahead / 0 behind.
+- Last full run: **498 tests pass** (+1 deselected `health`), `compileall` clean, CI correctness lint clean.
+- Docker stack up (TimescaleDB/Qdrant/Redpanda/OPA/Vault); OHLCV for **73 symbols** (10-year history, 2016→2026, for the frozen universe). No LLM key required — the Master LLM falls back to the offline reasoner.
+- **Decision: hold release (Law 3 in force).** E3 is closed on available data; the factor-gate default is **off** (`ARTHAAI_FACTOR_GATE=true` opt-in).
 
-**Completed this session:** all 11 independent backlog tickets + ARTHA-309/311 (fill simulation, VaR/ES, human approval gate, correlation-regime agent, cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus, mTLS fail-closed, real-IdP JWT test, portfolio + dynamic Kelly), a full `/review uncommitted` pass whose **10 findings are all fixed**, and the §14 follow-ups **#1 (commit+push), #4 (live stop enforcement via ledger + `mark`), #5 (`promote-sweep` + `/promotions` endpoint), #6 (portfolio exposure guard + VaR/ES in `execute`), #8 (config-driven news feeds), #9 (alerts + LLM call tracking)**.
+**The one thing that matters:** E3 — no signal beats buy-and-hold out-of-sample on the available data
+(11 variants, 4 axes, 0 qualified). This is a **data** problem: reopening E3 requires a genuinely
+exogenous, point-in-time dataset (news/alt), not more signals on the same price data.
 
 **Immediate next steps (in order):**
-2. ✅ **E3 decision: hold release.** No signal is currently promotable; no separate market-neutral criterion is approved. Keep the directional B&H gate unchanged and Law 3 in force.
-3. ✅ **Factor-gate default** — `factor_gate=False`; explicit `ARTHAAI_FACTOR_GATE=true` remains available. Focused factor-gate, backtest, and Kelly tests pass.
-7. **Composite → live sizing** — only if #2 shows a promotable edge (Law 3). *(depends on #2)*
-10. **Broker adapter + Pine/MQL5/TDX exporters** — only after E3 passes. *(depends on #2 + #4)*
+1. **Procure a PIT alternative dataset** (historical news or alternative data) — the only path to E3. The ingestion seams are already in place (provider adapter contract, per-bar provenance, corporate actions, PIT membership).
+2. **Do not** permute more signals on the same sample (multiple-testing trap), and **do not** relax the promotion gate.
+3. **Adjacent work while Law 3 holds:** ARTHA-111 (mTLS termination, infra), operational-storage HA/backup rehearsal, and periodic code audits.
 
 **Commands to resume:**
 ```powershell
 docker compose up -d
 $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli migrate
 $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m pytest tests/ -q -k "not health"
-# reproduce the E3 gate (Expect REJECTED):
+# reproduce the E3 gate (expect REJECTED, 0/2 windows):
 $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli promote GLD --signal breakout --cost-bps 10
-# universe sweep of the promotion gate:
-$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli promote-sweep --signal breakout
-# composite / IC-weighted ranking over the universe:
-$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli factors composite --symbols GLD,SLV,USO,XOM,AAPL --ic-weighted
+# frozen-universe sweep of the promotion gate (expect 0/73):
+$env:PYTHONUTF8=1; $s=((Get-Content evaluation/frozen_universe.json|ConvertFrom-Json).symbols) -join ','
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli promote-sweep --symbols $s --signal ic_composite --cost-bps 10 --no-save
+# full pipeline (offline LLM fallback):
+$env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli analyze GLD --skip-ingest
 ```
 
-**Known open items / caveats:** the human-gate fix binds symbol/side/fraction and is one-shot, but the executed stop is engine-derived (no price-drift tolerance). `execute` enforces the portfolio exposure cap but the ledger is a flat file (no atomic multi-writer). `PROJECT_BOARD.md` is stale relative to this report.
+**Known open items / caveats:** the executed stop is engine-derived (no price-drift tolerance);
+`execute` enforces the portfolio exposure cap but the ledger is a flat file (no atomic multi-writer);
+`PROJECT_BOARD.md` is the ticket tracker and is kept in sync with this report.
 
 ---
 
@@ -296,30 +317,28 @@ $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli factors composite -
 - Data flows end-to-end: ingest (provider chain with failover) → TimescaleDB →
   LangGraph fan-out (DB/Quant/News/Alt agents) → Master LLM synthesis → Kelly sizing
   → paper execution, all under OPA policy, circuit breakers, and configurable auth.
-- **E3 fails, live-verified — now across four signal families and a 45-asset
-  cross-section.** `trend`, `breakout`, an equal-weight cross-sectional composite, and an
-  **IC-weighted composite** (expanding rank-IC weights with an embargo) were all run
-  through the promotion gate on a widened LSE universe (~45 symbols). **Nothing passes all
-  OOS windows.** Several assets are "one-window-shy" (SLV, PPLT, PALL, XLE, XLU, XLC, EWJ,
-  JPM), and the failures concentrate in the most recent bull window — see
-  [§8.3](#83-e3--the-edge-gate--fails) and [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
-  No factor in the 442-strong zoo survives Benjamini-Hochberg FDR on a 28-asset cross-section.
-- **The gate may be grading the wrong quantity for cross-sectional signals** (new issue,
-  [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)). The promotion gate compares a
-  signal's *exposure-matched long-only* return to buy-and-hold — a fair test for a
-  directional signal, but a cross-sectional factor's natural expression is a long/short,
-  market-neutral book that has no B&H benchmark. This does **not** make E3 pass; it flags
-  that the release criterion and the cross-sectional research direction are misaligned.
+- **E3 fails, live-verified — across 11 variants and 4 information axes.** `trend`, `breakout`,
+  `composite`, `ic_composite`, `tsmom`, `xsmom` (own-price), `regime`/`regime_tsmom`
+  (market-state), `value` (SEC EDGAR fundamentals, PIT), and `macro`/`macro_tsmom` (FRED
+  term spread) were all run through the promotion gate on a **10-year, 73-asset** frozen
+  sample (`e6468871a625ea35`). **Nothing passes all OOS windows** — 0 qualified in every
+  variant (fundamental on its 33-equity subset). See [§8.3](#83-e3--the-edge-gate--fails).
+  No factor in the 445-strong zoo survives Benjamini-Hochberg FDR.
+- **The "market-neutral criterion" reframing was considered and rejected (2026-10-12).**
+  The gate compares exposure-matched long-only vs B&H, which fits directional signals; a
+  cross-sectional factor's natural expression is market-neutral. Re-framing the benchmark on
+  the *same* price data was judged a multiple-testing trap and **not** pursued — E3 needs a
+  new data axis, not a new criterion. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
 - **E2 is wired** (the factor signal now drives sizing via a dampen-only gate), but the
   evidence says it should stay **off**: it lowered OOS Sharpe on GLD, and the factor
   signal it consumes has no FDR-significant edge. The default is off pending promotion; explicit opt-in remains available. See [§10](#10-known-issues--defects).
-- **Thirteen open backlog items were completed this session** (ARTHA-221, 409, 310, 308,
+- **Thirteen open backlog items were completed in the prior session (2026-10-04)** (ARTHA-221, 409, 310, 308,
   219, 215, 216, 507, 508, 107, 110, plus 309/311): fill simulation (slippage/partial/
   rejection), VaR/Expected-Shortfall, dynamic + portfolio Kelly, correlation-regime agent,
   cross-sectional + IC-weighted composite, live news ingestion, OpenTelemetry, Prometheus,
   human approval gate, mTLS fail-closed, and a real-IdP JWT test. See
   [§14](#14-remaining-work) for what remains.
-- A genuine **data-corruption bug was found and fixed** this session: GLD/SLV carried
+- A genuine **data-corruption bug was found and fixed** in the prior session: GLD/SLV carried
   two bars per day (LSE `00:00` + yfinance `13:30`), which silently doubled their series
   and distorted every backtest. 1095 duplicate bars were removed.
 
@@ -327,11 +346,11 @@ $env:PYTHONUTF8=1; .\.venv\Scripts\python.exe -m arthaai.cli factors composite -
 |---|---|
 | Tier 1 — Interface & Ingress | ✅ implemented (JWT/OAuth 2.1 IdP-verified, rate limits, CORS, mTLS fail-closed) |
 | Tier 2 — Intelligence Core | 🟡 agents work (incl. correlation regime); Quant "edge" still unproven |
-| Alpha Zoo factor engine | 🟡 445 factors, 403 compute; composite + IC-weighted composite built; no FDR-significant edge |
+| Alpha Zoo factor engine | 🟡 445 factors (444 healthy, 1 degenerate); composite + IC-weighted composite built; no FDR-significant edge |
 | Tier 3 — Oversight & Sizing | ✅ Kelly + policy caps + promotion gate + portfolio/dynamic Kelly + VaR/ES + human gate |
 | Tier 4 — Action | ✅ paper engine, stops, kill switch, audit, fill/slippage sim; broker deferred by Law 3 |
 | Cross-cutting | ✅ OTel tracing + Prometheus metrics (optional `obs` extra) |
-| **★ Edge (E1–E3)** | **🟡 E1/E2 wired · ❌ E3 fails across 4 signal families (gate/criterion mismatch flagged)** |
+| **★ Edge (E1–E3)** | **🟡 E1/E2 wired · ❌ E3 fails across 11 variants / 4 axes (0/73) — a data problem, not a code gap** |
 
 **Overall: ~80% of the blueprint is code-complete; 0% of the release gate is met** —
 because the release gate is gated on E3, and E3 is a research result, not a checkbox.
@@ -342,13 +361,13 @@ because the release gate is gated on E3, and E3 is a research result, not a chec
 
 | Metric | Value |
 |---|---|
-| Python source files | ~58 (excl. generated zoo) |
-| Test files | 34 |
-| Tests passing (DB-independent) | **353** (+1 deselected `health`) |
-| CLI commands | 25 |
-| Registered factor alphas | **445** (alpha101 101, gtja191 190, qlib158 154) |
-| DB symbols with OHLCV | ~50 (widened LSE cross-section for E3) |
-| Quality gates | `compileall` clean · correctness lint clean · CI workflow defined |
+| Python source files | ~86 (excl. generated zoo) |
+| Test files | 60 |
+| Tests passing (DB-independent) | **498** (+1 deselected `health`) |
+| CLI commands | 38 |
+| Registered factor alphas | **445** (alpha101 101, gtja191 190, qlib158 154); **444 healthy, 1 degenerate** (`alpha101_096`, rejected by validation) |
+| DB symbols with OHLCV | **73** (10-year history 2016→2026 for the frozen universe) |
+| Quality gates | `compileall` clean · 498 tests pass · correctness lint clean · CI workflow defined |
 
 ### Data flow
 
@@ -379,7 +398,7 @@ Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss
 
 ### Implemented
 
-**Gateway (`arthaai/gateway/app.py`, 142 lines)**
+**Gateway (`arthaai/gateway/app.py`, 177 lines)**
 - FastAPI app, version `0.1.0`; served via `arthaai serve`.
 - Endpoints:
 
@@ -391,6 +410,7 @@ Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss
   | `POST` | `/analyze/{symbol}` | bearer/cookie auth · rate limit 10/min |
   | `GET` | `/metrics` | bearer/cookie auth · mTLS (optional `obs` extra; 503 if absent) |
   | `GET` | `/promotions` | bearer/cookie auth · mTLS (qualified symbols from the promotion gate) |
+  | `GET` | `/alerts` | bearer/cookie auth · mTLS (recent operational alerts, ARTHA-5) |
 
 - **Rate limiting** (`slowapi`) keyed by `client_key` — a SHA-256 **hash of the bearer
   token** (header or cookie), falling back to client IP. Keying on the credential means
@@ -399,7 +419,7 @@ Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss
   (empty = same-origin only), credentials enabled.
 - `/ohlcv` lazily ingests via **`ingest_resilient`** when the DB has no bars.
 
-**Auth (`arthaai/gateway/auth.py`, 133 lines)** — three modes, selected by config:
+**Auth (`arthaai/gateway/auth.py`, 108 lines)** — three modes, selected by config:
 1. **OAuth 2.1 / JWT** (`ARTHAAI_OAUTH_JWKS_URL` set): validates the bearer token as a
    JWT — signature via the IdP JWKS, **`exp` required**, plus `iss`/`aud`. Requires the
    optional `auth` extra (`pyjwt[crypto]`); clear 503 if absent.
@@ -408,10 +428,10 @@ Tier 4 paper execution → Position/Portfolio state machine, mandatory stop-loss
 3. **Unconfigured**: dev mode accepts any non-empty bearer; **production
    (`dev_mode=False`) refuses with 503** rather than silently accepting anything.
 
-**Dashboard (`gateway/static/dashboard.html`, 155 lines)** — price/candles/verdict/
-allocation; token held in an httpOnly cookie (never in page source).
+**Dashboard (`gateway/static/dashboard.html`, 169 lines)** — price/candles/verdict/
+allocation + an "Operational alerts" panel; token held in an httpOnly cookie (never in page source).
 
-**Config (`arthaai/config.py`, 123 lines)** — env-driven `Settings`:
+**Config (`arthaai/config.py`, 137 lines)** — env-driven `Settings`:
 `dev_mode`, `provider_chain`, `cb_fail_max`, `cb_reset_timeout`, `stale_max_age_days`,
 `kelly_fraction`, `max_single_instrument`, `risk_free_rate`, `factor_gate`,
 `factor_dampening`, `factor_epsilon`, `vol_target`, `vol_max_leverage`,
@@ -442,23 +462,24 @@ plus `analyze()` used by the gateway and CLI. The ingest node calls
 **GraphState (`orchestration/state.py`)** — `symbol`, `skip_ingest`, `db`, `quant`,
 `news`, `alt`, `correlation`, `verdict`, `allocation`.
 
-**DB_Agent (`agents/db_agent.py`, 68 lines)** — deterministic indicators (SMA20/50,
+**DB_Agent (`agents/db_agent.py`, 63 lines)** — deterministic indicators (SMA20/50,
 RSI14, ADX14); **ADX regime selector**: `ADX ≥ 25` → Donchian breakout signal, else
 multi-timeframe trend filter. Runs under a SPIFFE identity via `authorize_tool`.
 
-**Quant Agent (`agents/quant_agent.py`, 185 lines)**:
+**Quant Agent (`agents/quant_agent.py`, 155 lines)**:
 - `run()` returns annualised `mu`/`variance`/`sigma` and `factor_signal`.
 - `factor_signal_series()` — a **causal, per-bar** aggregate (row-wise mean) of a fixed
   a-priori factor set (`DEFAULT_FACTOR_IDS`), used by both live sizing and the backtest so
   the two never diverge.
 - `_evaluate_factors()` — top-K factor display by |score|.
 
-**News_Agent (`agents/news_agent.py`, 35 lines)** — Qdrant hybrid search (ticker filter
+**News_Agent (`agents/news_agent.py`, 27 lines)** — Qdrant hybrid search (ticker filter
 + similarity), wrapped in a circuit breaker with neutral fallback; returns
 `avg_sentiment` and labelled `bullish`/`bearish`/`mixed`.
 
-**Alt_Agent (`agents/alt_agent.py`, 38 lines)** — explicitly-labelled **STUB** synthetic
-physical signals for commodity ETFs; abstains for equities.
+**Alt_Agent (`agents/alt_agent.py`, 31 lines)** — explicitly-labelled **STUB** synthetic
+physical signals for commodity ETFs; abstains for equities. Its synthetic score is **excluded
+from the verdict blend** (`_weighted_score` skips `stub` signals) so it cannot reach sizing.
 
 **Correlation Regime agent (`agents/correlation_regime.py`)** — new (ARTHA-215). Measures
 the average pairwise correlation of a cross-asset universe over a rolling window and labels
@@ -466,7 +487,7 @@ the regime (`risk_off` / `mixed` / `diversified`); surfaced to the Master LLM as
 context, not a directional signal** (no weight in `_weighted_score`). Registered under its
 own OPA scope.
 
-**Master Reasoning LLM (`agents/master_llm.py`, 226 lines)** — provider chain
+**Master Reasoning LLM (`agents/master_llm.py`, 208 lines)** — provider chain
 `anthropic → gemini → local → offline` with circuit breakers; `_parse_verdict`,
 `_weighted_score`, `provider_status()`, `reason()`. Always ends at the deterministic
 offline reasoner, so **no API key is required**.
@@ -475,11 +496,17 @@ offline reasoner, so **no API key is required**.
 
 | Module | Lines | Role |
 |---|---|---|
-| `data/provider.py` | 197 | Provider registry, per-provider circuit breakers, stale-while-revalidate, per-asset preference, `ingest_resilient` |
-| `data/ingest.py` | 74 | yfinance fetch + Kafka publish |
-| `data/lse.py` | 118 | London Strategic Edge API client |
-| `data/universe.py` | 85 | Universe catalog sync/search |
-| `data/consumer.py` | 49 | Redpanda/Kafka ingest-event consumer (optional extra) |
+| `data/provider.py` | 380 | Provider registry, per-provider circuit breakers, stale-while-revalidate, per-asset preference, `ingest_resilient`, `refresh_history` |
+| `data/ingest.py` | 64 | yfinance fetch + Kafka publish |
+| `data/lse.py` | 102 | London Strategic Edge API client |
+| `data/universe.py` | 70 | Universe catalog sync/search |
+| `data/consumer.py` | 41 | Redpanda/Kafka ingest-event consumer (optional extra) |
+| `data/metadata.py` | — | Exchange / asset-class enrichment (yfinance) |
+| `data/membership.py` | — | PIT universe membership (survivorship control) |
+| `data/corporate_actions.py` | — | Splits/dividends capture + unexplained-gap audit |
+| `data/fundamentals_pit.py` | — | SEC EDGAR point-in-time fundamentals (value axis) |
+| `data/macro_series.py` | — | Keyless FRED CSV series (macro axis) |
+| `data/provider_contract.py` | — | Adapter acceptance contract (`check_provider_contract`) |
 
 ### Missing / gaps
 - **Quant Agent is still basic statistics**, not the multi-factor model the blueprint
@@ -498,19 +525,22 @@ offline reasoner, so **no API key is required**.
 
 | Module | Lines | Role |
 |---|---|---|
-| `factors/base.py` | 454 | Operators: `rank`, `zscore`, `scale`, `delta`, `ts_*`, `decay_linear`, `safe_div`, … |
-| `factors/registry.py` | 352 | AST-scan discovery, lazy import, **helper injection**, health |
-| `factors/panel.py` | 132 | Wide OHLCV panel; derives `vwap`/`amount`; daily de-dup |
-| `factors/eval.py` | 242 | Rank-IC, t-stat, **Benjamini-Hochberg FDR**, IC embargo |
-| `factors/composite.py` | ~230 | Cross-sectional z-score composite; **IC-weighted composite** (expanding rank-IC weights, embargoed); asset ranking / top-K |
+| `factors/base.py` | 352 | Operators: `rank`, `zscore`, `scale`, `delta`, `ts_*`, `decay_linear`, `safe_div`, … |
+| `factors/registry.py` | 293 | AST-scan discovery, lazy import, **helper injection**, output validation, health |
+| `factors/panel.py` | 127 | Wide OHLCV panel; derives `vwap`/`amount`; daily de-dup |
+| `factors/eval.py` | 199 | Rank-IC, t-stat, **Benjamini-Hochberg FDR**, IC embargo |
+| `factors/composite.py` | ~189 | Cross-sectional z-score composite; **IC-weighted composite** (expanding rank-IC weights, embargoed); asset ranking / top-K |
 
 - **445 alphas** load cleanly (`alpha101` 101, `gtja191` 190, `qlib158` 154).
 - **Loader helper injection**: many machine-extracted zoo files call helpers
   (`safe_div`, `ts_std`, `np`, …) they never import. Rather than patch hundreds of
   generated files, `registry._inject_helpers` supplies the `factors.base` namespace on
-  load (never overriding names the module defines). Combined with panel-derived
-  `vwap`/`amount` and removing a leaked junk line, single-symbol compute went
-  **341 → 403/445**; the remaining 42 are cross-sectional (undefined for one symbol).
+  load (never overriding names the module defines). **Verified by execution (2026-10-12):**
+  computing all 445 factors on a realistic multi-symbol panel gives **444 healthy / 1
+  degenerate** (`alpha101_096`, >95% NaN, rejected by `_validate_output`). On a *single*
+  symbol the cross-sectional factors are undefined by design.
+- `_validate_output` rejects NaN/inf/shape **and constant/all-zero** output (hardened
+  2026-10-12 — the class of the `regression_neut` bug).
 - `factors bench` evaluates the zoo with **BH FDR** and an explicit observation count.
 - **Cross-sectional composite (`factors/composite.py`)**: standardises each factor across
   symbols per date (z-score), averages into a composite, and ranks the universe. An
@@ -554,7 +584,7 @@ sizing:
 precomputed per-bar signal that lets cross-sectional / composite signals be graded by the
 same gate. `oos_slice()` and **`oos_windows()`** (non-overlapping, most-recent-first).
 
-**Promotion gate (`backtest/promotion.py`, 137 lines)** — a signal is promoted only if it
+**Promotion gate (`backtest/promotion.py`, 112 lines)** — a signal is promoted only if it
 passes **all windows** and all three criteria:
 1. Sharpe ≥ `MIN_SHARPE` (1.0)
 2. Max drawdown ≤ `MAX_DD` (20%)
@@ -562,9 +592,10 @@ passes **all windows** and all three criteria:
    B&H, *not* the ~1–5%-exposure Kelly return (the old comparison was unwinnable by
    construction). `combine_windows()` requires the intersection across windows.
 
-**Persistence (`db/timescale.py`, 281 lines)** — `signal_promotion` upsert/get and
+**Persistence (`db/timescale.py`, 502 lines)** — `signal_promotion` upsert/get and
 `list_qualified_symbols`; provider preference recording; **canonical daily timestamps**;
-`load_ohlcv` de-duplicates by day; `repair_daily_duplicates()`.
+`load_ohlcv` de-duplicates by day; `repair_daily_duplicates()`; PIT membership, ingest-batch
+audit, corporate-action, and issuer/CIK accessors.
 
 ### Missing / gaps
 - Portfolio Kelly, VaR/Expected-Shortfall, and dynamic Kelly are now **implemented**
@@ -578,7 +609,7 @@ passes **all windows** and all three criteria:
 
 ### Implemented
 
-**State machine (`execution/state.py`, 247 lines)**
+**State machine (`execution/state.py`, 212 lines)**
 - `Fill`; `Position` lifecycle `FLAT → PENDING_ENTRY → OPEN → EXITING → CLOSED`.
 - `Portfolio` — multi-position aggregate with a **rolling peak-to-trough equity-curve
   breaker**, `record_entry_equity()`, `mark_to_market()`, `add_proceeds()`,
@@ -608,11 +639,11 @@ steps open positions against the latest bar and fires the stop/target via the ca
 `paper-sim`). `execute` also enforces the portfolio exposure cap from the ledger's open
 notional.
 
-**Audit log (`execution/audit.py`, 59 lines)** — append-only JSONL (`AuditLog` +
+**Audit log (`execution/audit.py`, 49 lines)** — append-only JSONL (`AuditLog` +
 `read_audit`); engine records orders, fills (with `stop_loss`/`target`/`signal` reason),
 breaker trips, kill switch, unlock. Opt-in, so tests never write files.
 
-**Bar-loop simulation (`execution/simulate.py`, 177 lines)** — `simulate_symbol()` drives
+**Bar-loop simulation (`execution/simulate.py`, 174 lines)** — `simulate_symbol()` drives
 the engine bar-by-bar so **stop-losses actually fire**; look-ahead safe; long-only;
 returns fills, stop/target counts, realised P&L, equity curve. Exposed as
 `arthaai paper-sim`.
@@ -633,8 +664,10 @@ All results below were produced against the running Docker stack
 (`docker compose up -d`: TimescaleDB, Qdrant, Redpanda, OPA, Vault).
 
 ### 8.1 Schema migration — ✅ verified
-`arthaai migrate` applied **11 idempotent statements** and **repaired 1095 duplicate
-daily bars**. Before: GLD 1008 rows / 504 days (2/day); after: 499 rows / 499 days.
+`arthaai migrate` applies the idempotent `schema.sql` (**26 statements** as of 2026-10-12; the
+original run applied 11 and **repaired 1095 duplicate daily bars** — GLD 1008 rows / 504 days
+(2/day) → 499 rows / 499 days). Later tables added: `universe_membership`, `ingest_batch`,
+`corporate_action`, `issuer` (+ `assets.issuer_cik`).
 
 ### 8.2 Promotion gate — ✅ verified (as a gate)
 `arthaai promote GLD --signal breakout --cost-bps 10` (two OOS windows):
@@ -649,40 +682,43 @@ promotable — the all-windows rule is what prevents cherry-picking. `trend` beh
 same. Rows persisted to `signal_promotion`.
 
 ### 8.3 E3 — the edge gate — ❌ **FAILS**
-Re-confirmed across **four signal families** on **2026-10-04** against the live stack with a
-widened **45-symbol LSE universe** (~500 daily bars each, 2024-08 → 2026-10). The promotion
-gate (Sharpe ≥ 1.0 · MaxDD ≤ 20% · exposure-matched long-only > B&H, on **every** OOS window)
-rejects:
+**Verdict (2026-10-12):** on a **10-year, 73-asset** frozen sample
+(`evaluation/frozen_universe.json`, hash `e6468871a625ea35`), **11 pre-declared signal variants
+across 4 information axes all fail** the promotion gate (Sharpe ≥ 1.0 · MaxDD ≤ 20% ·
+exposure-matched long-only > B&H, on **every** OOS window). Raw sweeps in
+`evaluation/sweep10_*.txt`; full log in [evaluation/e3_results.md](evaluation/e3_results.md).
 
-| Signal family | Assets | Qualified |
+| Axis | Variants | Result |
 |---|---|---|
-| `trend` | 7 | none |
-| `breakout` (ADX ≥ 25) | 7 | none |
-| equal-weight cross-sectional composite | 7 | none |
-| **IC-weighted composite** (h=1 and h=5, min_ic=20) | **45** | none |
+| Own-price | `trend`, `breakout`, `composite`, `ic_composite`, `tsmom` L=126, `xsmom` L=63/126 | **0/73** each |
+| Market-state | `regime`, `regime_tsmom` | **0/73** each |
+| Fundamental (SEC EDGAR, PIT) | `value` | **0/34** (33-equity subset) |
+| Macro (FRED term spread) | `macro`, `macro_tsmom` | **0/73** each |
 
-No symbol passes all OOS windows. Eight assets are "one-window-shy" at h=1 (SLV, PPLT, PALL,
-XLE, XLU, XLC, EWJ, JPM); three at h=5 (SLV, UNG, EWJ). Failures concentrate in the most
-recent bull window (e.g. SLV window 351–501 passes strongly — long-only **+31.7%** vs B&H
-**−12.4%** — while window 201–351 lags B&H's +124.8% melt-up). **Law 3 holds: nothing is
-promotable.** This is a research result, not a coding gap.
+No symbol passes both OOS windows in any variant. The result is robust to sample length
+(2-year → 10-year re-freeze) and to signal family. **Law 3 holds: nothing is promotable.**
+This is a research result, not a coding gap. The superseded 2-year sample (`f1f17e20c26d6eea`)
+and the earlier 45-symbol LSE diagnostic are historical.
 
 ### 8.4 Factor IC bench — live
-`arthaai factors bench` over **28 assets × 442 factors** (horizon 1, BH FDR α=0.05):
+`arthaai factors bench` over **28 assets × 445 factors** (horizon 1, BH FDR α=0.05):
 
 > **0 factors survive BH FDR**; 2 "alive", 10 "reversed", 430 dead.
 
 The IC machinery is correct and the multiple-testing correction is doing its job: with
-442 tests, the best t-stat (~−2.7) does not clear the BH threshold. **No cross-sectional
-factor shows a robust edge** in this universe/window.
+445 tests, the best t-stat does not clear the BH threshold. **No cross-sectional factor
+shows a robust edge** in this universe/window. (This run predates the 10-year re-freeze;
+the conclusion is unchanged on the extended sample.)
 
 ### 8.5 Volatility targeting — implemented, not beneficial here
 With `--vol-target 0.15`, window 199–349 Sharpe moved **2.33 → 2.11** (worse). Kept
 disabled by default.
 
-### 8.6 Factor-zoo repair — ✅ verified
-Single-symbol compute rose **341 → 403/445** after helper injection + `vwap`/`amount`
-derivation; the residual 42 are cross-sectional.
+### 8.6 Factor-zoo health — ✅ verified
+Executing all 445 factors on a realistic multi-symbol panel (2026-10-12): **444 healthy, 1
+degenerate** (`alpha101_096`, >95% NaN, rejected by `_validate_output`). Helper injection +
+panel-derived `vwap`/`amount` fixed the earlier single-symbol failures; on a single symbol the
+cross-sectional factors are undefined by design.
 
 ### 8.7 E3 exhaustion — the criterion-mismatch issue
 **New finding (2026-10-04).** After four signal families and a 45-asset cross-section all
@@ -706,15 +742,20 @@ is a **policy decision**: either (a) accept no promotable directional edge (Law 
 against a dollar-neutral benchmark) as a **separate, documented criterion** — not by weakening
 the existing B&H gate.
 
+**Resolved (2026-10-12): option (a) chosen.** Re-framing the benchmark on the *same* price
+data was judged a multiple-testing trap and **not** pursued. E3 stays closed until a genuinely
+exogenous, point-in-time data axis is procured. This section is retained as the record of the
+considered-and-rejected alternative.
+
 ---
 
 ## 9. Cross-cutting concerns
 
 | Concern | Status |
 |---|---|
-| **Policy / identity** (`security/policy.py`, 39) | SPIFFE-style `AgentIdentity` + `authorize_tool`; **OPA-backed** with in-process least-privilege fallback (`security/opa.py`, 47) |
-| **Secrets** (`security/vault.py`, 46) | Vault read/write; env fallback |
-| **Resiliency** (`resiliency/breaker.py`, 44) | `pybreaker` per service; `guarded(name, fn, fallback)` |
+| **Policy / identity** (`security/policy.py`, 27) | SPIFFE-style `AgentIdentity` + `authorize_tool`; **OPA-backed** with in-process least-privilege fallback (`security/opa.py`, 38) |
+| **Secrets** (`security/vault.py`, 31) | Vault read/write; env fallback |
+| **Resiliency** (`resiliency/breaker.py`, 40) | `pybreaker` per service; `guarded(name, fn, fallback)`; emits an operational alert on trip/error |
 | **CI** (`.github/workflows/ci.yml`) | Q1 `compileall` · Q2 `pytest -k "not health"` · correctness-only lint (zoo excluded) |
 | **Observability** | ✅ OpenTelemetry tracing (`observability/tracing.py`, `ARTHA-507`) + Prometheus metrics (`observability/metrics.py`, `ARTHA-508`); optional `obs` extra; authenticated `/metrics` (same principal/mTLS as data routes) + request middleware that labels only matched route templates; no-op when the extra is absent |
 | **Alerting / cost tracking** | 🟡 hooks added: `observability/alerts.py` (log + `arthaai_alerts_total`) wired to circuit-breaker trips; `arthaai_llm_calls_total{provider,outcome}` usage tracking in the Master LLM. No external pager/billing integration (deploy infra). |
@@ -723,19 +764,19 @@ the existing B&H gate.
 
 ## 10. Known issues & defects
 
-1. **E3 fails** — no promotable edge across **four signal families** (`trend`, `breakout`,
-   equal-weight composite, IC-weighted composite) and a widened **45-asset** cross-section.
-   No factor in the zoo is FDR-significant. The blocking release-gate item; a research
-   problem, not a coding one.
-2. **Promotion-gate criterion vs cross-sectional signals (new)** — the gate grades
-   exposure-matched long-only vs B&H, which fits *directional* signals; a cross-sectional
-   factor's natural expression is a long/short market-neutral book. The failure pattern is
-   consistent with a defensive signal graded against an unsuitable benchmark. **Do not
-   silently relax the gate**: choose (a) accept no edge, or (b) add a separate, documented
-   market-neutral evaluation path. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
-3. **Factor gate is ON by default but unjustified** — it lowered OOS Sharpe and its input
-   factor signal has no significant edge. **Recommendation: default `factor_gate=False`**
-   (Law 3: don't trust an unproven signal). `ARTHAAI_FACTOR_GATE` re-enables it.
+1. **E3 fails** — no promotable edge across **11 pre-declared variants / 4 information axes**
+   (own-price, market-state, fundamental, macro) on a **10-year, 73-asset** frozen sample;
+   0 qualified in every variant. No factor in the zoo is FDR-significant. The blocking
+   release-gate item; a **data** problem, not a coding one — see
+   [evaluation/e3_results.md](evaluation/e3_results.md).
+2. **Promotion-gate criterion vs cross-sectional signals — considered, rejected (2026-10-12)** —
+   the gate grades exposure-matched long-only vs B&H (correct for directional signals); a
+   cross-sectional factor's natural expression is market-neutral. Re-framing the benchmark on
+   the same data was judged a multiple-testing trap and **not** pursued. E3 needs a new data
+   axis, not a new criterion. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
+3. **Factor gate is OFF by default** — the mechanism is wired (dampen-only) but its input
+   factor signal has no edge and it lowered OOS Sharpe, so the default is `factor_gate=False`.
+   `ARTHAAI_FACTOR_GATE=true` re-enables it. (Law 3: don't size on an unproven signal.)
 4. **Duplicate daily bars (fixed)** — dual-provider ingest stored two timestamps/day for
    GLD/SLV, corrupting backtests. Fixed at ingest (canonical midnight key), at read
    (`load_ohlcv` de-dup), in `build_panel`, and via `arthaai migrate`.
@@ -746,12 +787,27 @@ the existing B&H gate.
 7. **CI now runs on GitHub** (workflow installs `.[dev,obs,auth]`; observability tests skip when the `obs` extra is absent). All work is committed and pushed on `feat/arthaai-core`.
 8. **qdrant client/server version mismatch** and **Vault 404s** — cosmetic, as before.
 9. `test_health` pings TimescaleDB; excluded from normal runs and CI.
+10. **`regression_neut` returned all zeros (fixed 2026-10-12)** — `factors/base.py` ended in
+    `y.sub(beta).mul(x * 0)` (the correct line was commented out), so the exported public
+    primitive returned an all-zero frame and was untested. Now returns the intercept-aware
+    residual `y - a - beta*x`; `tests/test_regression_neut.py`. It had no callers, so the bug
+    was latent.
+11. **Factor-registry validation gap (fixed 2026-10-12)** — `_validate_output` accepted
+    constant/all-zero frames (the `regression_neut` class). Now rejects them;
+    `tests/test_registry_validation.py`. Re-audited all 445 factors: 444 healthy.
+12. **Synthetic alt data leaked into the verdict (fixed 2026-10-12)** — the `Alt_Agent` stub's
+    synthetic score was weighted 0.25 into the offline verdict (and the LLM prompt), and the
+    verdict confidence feeds sizing; it flipped a neutral verdict to bullish. `master_llm`
+    now excludes `stub` signals from the blend; `tests/test_llm_alt_stub.py`.
+13. **Overstated docstrings corrected (2026-10-12)** — `db_agent` claimed breakout "real
+    risk-adjusted edge (GLD Sharpe 1.28, SLV 1.29)"; `security/__init__` claimed "STUBS ONLY"
+    though `security/policy.py` consults live OPA. Both corrected to match the code.
 
 ---
 
 ## 11. Test inventory
 
-**353 passed, 1 deselected** (`test_health`, needs Docker) in ~14s.
+**498 passed, 1 deselected** (`test_health`, needs Docker) in ~17s. (60 test files; the table below lists the main ones.)
 
 | File | Focus |
 |---|---|
@@ -804,6 +860,15 @@ the existing B&H gate.
 | `seed-news` / `seed-secrets` | Seed Qdrant news / Vault secrets |
 | `serve` | Run the Tier 1 gateway |
 | `consume` | Consume ingest events from Redpanda |
+| `refresh-history` / `refresh-universe` | Bounded-overlap history repair (per symbol / universe) |
+| `audit-history` | Calendar-aware coverage audit |
+| `backfill-metadata` | Populate exchange/asset-class metadata via yfinance |
+| `freeze-universe` | Emit a reproducible evaluation-universe manifest (hash; `--as-of` for PIT) |
+| `backfill-membership` / `universe-as-of` | PIT universe membership (derive listing windows / query as-of) |
+| `ingest-batches` | Recent ingestion-batch audit trail |
+| `ingest-actions` / `audit-actions` | Corporate-action capture / unexplained-gap audit |
+| `backfill-issuers` | Link assets to their SEC issuer (CIK) |
+| `export-script` | Export a signal as a Pine / MQL5 / TDX script (ARTHA-412) |
 
 ---
 
@@ -812,39 +877,39 @@ the existing B&H gate.
 | Tier | Planned | Implemented | Key gap |
 |---|---|---|---|
 | **1 — Interface & Ingress** | ~100% | ~95% | Production IdP wiring; mTLS (infra) |
-| **2 — Intelligence Core** | ~100% | ~85% | Quant factor edge; Alt stub; composite not wired to sizing |
+| **2 — Intelligence Core** | ~100% | ~85% | Quant factor edge; Alt stub (vendor data); composite not wired to sizing |
 | **Alpha Zoo** | ~100% | ~95% | No FDR-significant edge; IC-weighted composite built, not live-wired |
 | **3 — Oversight & Sizing** | ~100% | ~95% | Portfolio Kelly/VaR not wired into live `execute` |
-| **4 — Action** | ~100% | ~85% | Live-loop stops; broker (deferred); exporters |
-| **Cross-cutting** | ~100% | ~80% | Alerting; cost tracking |
-| **★ Edge (E1–E3)** | ~100% | **E1✅ E2🟡 E3❌** | E3 research result + gate/criterion mismatch ([§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue)) |
+| **4 — Action** | ~100% | ~90% | Broker (deferred by Law 3); exporters done (ARTHA-412) |
+| **Cross-cutting** | ~100% | ~90% | External pager/billing integration (deploy infra) |
+| **★ Edge (E1–E3)** | ~100% | **E1✅ E2🟡 E3❌** | E3 needs a PIT alternative dataset; 11 variants / 4 axes all fail ([§8.3](#83-e3--the-edge-gate--fails)) |
 
 ---
 
 ## 14. Remaining work
 
-**Blocking the release gate**
-1. ✅ **E3 decision recorded (2026-10-10): hold release.** No separate market-neutral
-  criterion is approved; no promotable edge exists. Keep the directional B&H gate and
-  Law 3 unchanged. See [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).
-2. ✅ **Factor-gate default** — `factor_gate=False`; explicit `ARTHAAI_FACTOR_GATE=true`
-  opt-in is retained until a factor signal passes promotion.
-3. **Commit + push** — ✅ done: `92727b4` (backlog), `d8a0306` (follow-ups), `af8bc89` (CI extras) all pushed to `origin/feat/arthaai-core`.
+**The release gate (E3)** — the only thing blocking a live release.
+1. **E3 is closed on available data** (11 variants, 4 axes, 0 qualified). Reopening it requires
+   **procuring a point-in-time alternative dataset** (historical news / alt data). The ingestion
+   seams are ready: provider adapter contract, per-bar provenance, corporate actions, PIT
+   universe membership.
+2. **Do not** permute more signals on the same sample, and **do not** relax the B&H gate.
+   (The market-neutral reframing was considered and rejected — [§8.7](#87-e3-exhaustion--the-criterion-mismatch-issue).)
+3. **Law 3 stays in force** — no live capital until E3 passes.
 
-**Completed this pass (was on the list)**
-4. ✅ **Live stop enforcement** — `execute --ledger` + `arthaai mark` fire stops/targets in the live path.
-5. ✅ **`promote-sweep`** CLI + authenticated gateway **`/promotions`** endpoint.
-6. ✅ **Portfolio exposure guard + VaR/ES** surfaced in the live `execute` path.
-7. ✅ **Composite → live sizing** is now *wired into the backtest* (`run_backtest(signal_series=...)`) and rankable via `factors composite --ic-weighted`; live-sizing wiring still pending E3.
-8. ✅ **Config-driven news feeds** (`ARTHAAI_NEWS_FEEDS`, `news_auto_ingest`).
-9. ✅ **Alerting hooks** (`observability/alerts.py`) + **LLM call tracking** (`arthaai_llm_calls_total`).
+**Gated on E3 (do not start)**
+- Composite / factor → live sizing (only after a candidate passes promotion).
+- Live broker adapter (ARTHA-411).
 
-**Remaining (gated on the E3 decision)**
-10. **Composite → live sizing** — deferred while no signal passes E3 (Law 3). Reopen only
-  after an approved candidate passes promotion; do not wire an unproven signal live.
-11. **Broker adapter + Pine/MQL5/TDX exporters** — deferred until E3 passes and paper
-  stop operations are verified. Broker automation remains distinct from operator-invoked
-  `mark`; exporter work must not imply live approval.
+**Doable now (adjacent, while Law 3 holds)**
+- **ARTHA-111** — mTLS termination at the deploy gateway (infra).
+- **Operational-storage rehearsal** — validate the HA/backup blueprint (`docker-compose.ha.yml`) and measure RPO/RTO.
+- **Periodic code audits** — the three passes each found real issues; the reports are mostly but not entirely accurate.
+
+**Completed in the 2026-10-12 session** — E3 protocol + frozen sample + 11-variant evaluation;
+data-readiness (PIT membership, ingest-batch audit, provider contract, corporate actions,
+issuer/CIK, operational storage); ARTHA-412 exporters; ARTHA-512/513 alerting + dashboard;
+three audit passes (fixes: `regression_neut`, registry validation, alt-stub leak, docstrings).
 
 ---
 
@@ -852,6 +917,22 @@ the existing B&H gate.
 
 | Commit | Description |
 |--------|-------------|
+| `95771f8` | docs: end-to-end pipeline verification after the agent-layer audit |
+| `dd32e15` | fix: exclude stub alt signals from the offline verdict; doc corrections (agent audit) |
+| `29a7575` | docs: execution-level audit (Kelly / execution / gateway auth) |
+| `aa00f8b` | harden: registry rejects constant/all-zero factor output |
+| `e7b9b3e` | fix: correct `regression_neut` (returned all zeros); doc + board corrections |
+| `6fd2f40` | feat: corporate actions, issuer/CIK IDs, operational-storage configs |
+| `ea0ba17` | feat: reusable provider adapter contract (ARTHA-232) |
+| `36a9eca` | feat: PIT universe membership, ingest-batch audit, operational alert wiring |
+| `dfb224e` | feat: ARTHA-412 script exporters + ARTHA-512 alerting/dashboard |
+| `97ea5e0` | feat: macro term-spread axis (0/73) |
+| `c04ade1` | feat: SEC EDGAR PIT value/quality axis (0/34) |
+| `bfb57f1` | feat: intermarket risk-regime axis (0/73) |
+| `830a3b7` | docs: E3 verdict (no edge on available data) + board re-scope |
+| `47f028e` | feat: wire IC-weighted composite into the E3 gate (0/73) |
+| `1418dfe` | feat: asset metadata enrichment + frozen E3 evaluation sample |
+| `5f0b2cb` | feat: composite signal in the diagnostic CLI; fail loudly when unavailable |
 | `af8bc89` | ci: install obs+auth extras; skip observability tests without extras |
 | `d8a0306` | feat: live stop ledger + mark, promote-sweep, exposure guard, news feeds, alerts |
 | `92727b4` | feat: fill sim, tail risk, portfolio/dynamic Kelly, composite, observability, human gate |
@@ -867,10 +948,9 @@ the existing B&H gate.
 | `b6b9661` | Golden-fixture eval harness for Master Reasoning LLM |
 | `5577817` | Secure gateway — authenticate /ohlcv, httpOnly cookie |
 
-> **All committed and pushed.** The Phase 0–3 + A–D body of work, the **2026-10-04 backlog
-> session** (13 tickets), the `/review uncommitted` fix pass, the §14 follow-ups, the widened
-> LSE universe, and this report revision are all on `origin/feat/arthaai-core` (HEAD `af8bc89`).
-> Working tree clean, 0 ahead / 0 behind.
+> **All committed and pushed** to `origin/feat/arthaai-core` (**HEAD `95771f8`**), working tree
+> clean, 0 ahead / 0 behind. The 2026-10-12 session covers the E3 protocol/sample/verdict,
+> data-readiness infrastructure, ARTHA-412/512/513, and three code-audit passes (`5f0b2cb`→`95771f8`).
 
 ---
 
