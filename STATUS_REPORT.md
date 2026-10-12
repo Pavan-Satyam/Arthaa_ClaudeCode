@@ -160,9 +160,11 @@ at 2018-01-01 vs 73 today. Delisted/global history still needs a vendor master. 
 audit (ARTHA-231):** `ingest_batch` table + `timescale.record_ingest_batch/recent_ingest_batches`; CLI
 `ingest-batches`; `refresh_history` records every call (best-effort) and emits a `data_empty` alert on an
 empty fetch. (3) **Operational alert wiring (ARTHA-513):** `promote`/`promote-sweep` emit operational
-alerts; surfaced on `/alerts` and the dashboard — strictly observability, not execution triggers. Schema
-applied via `arthaai migrate` (21 statements). Full suite: 475 passed, 1 health test deselected;
-`compileall` clean; CI lint clean.
+alerts; surfaced on `/alerts` and the dashboard — strictly observability, not execution triggers. (4)
+**Provider adapter contract (ARTHA-232):** `arthaai/data/provider_contract.py` `check_provider_contract()`
+validates any adapter against the canonical contract (columns, sorted-unique `ts`, non-empty ids) — the
+acceptance test a future vendor runs before `register_provider`. Schema applied via `arthaai migrate`
+(21 statements). Full suite: 479 passed, 1 health test deselected; `compileall` clean; CI lint clean.
 
 ---
 
