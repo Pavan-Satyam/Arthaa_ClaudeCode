@@ -322,6 +322,16 @@ composite, ic_composite, momentum) have now been evaluated on the frozen hash `f
 none clears the gate. E3 remains open; no criterion was changed. See
 [evaluation/e3_results.md](evaluation/e3_results.md).
 
+**2026-10-12 — extended-history re-freeze (all families re-run):** Extended the sample to address its
+biggest weakness. `refresh-universe --lookback-days 3650` took the frozen universe from ~2 years to
+**2016-10-14 → 2026-10-09 (~10 years)** (1249–3009 bars/symbol). `freeze-universe` now hashes each
+symbol's bar count too, so the re-freeze produced a new sample hash **`e6468871a625ea35`** (superseding
+`f1f17e20c26d6eea`). Re-ran all seven pre-declared variants on the extended sample — **all 0/73**, none
+passing both OOS windows on any symbol (trend 0/73·8, breakout 0/73·4, composite 0/73·0, ic_composite
+0/73·6, tsmom L=126 0/73·9, xsmom L=63 0/73·3, xsmom L=126 0/73·5). The negative is now robust to
+sample length, not a short-window artifact. E3 remains open. See
+[evaluation/e3_results.md](evaluation/e3_results.md).
+
 ---
 
 ## Epic ARTHA-0 — Foundation & Infra

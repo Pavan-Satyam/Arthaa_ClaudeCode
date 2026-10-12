@@ -18,36 +18,44 @@ next verdict is reproducible rather than cherry-picked.
 | Count | **73** symbols |
 | Composition | 36 ETF · 33 equity · 4 commodity_etf |
 | Exchanges | 36 NYSEARCA · 18 NASDAQ · 18 NYSE · 1 BATS |
-| Content hash (`symbols_sha256_16`) | **`f1f17e20c26d6eea`** |
-| Frozen at | 2026-10-12T01:24:33Z |
+| Sample hash (`sample_sha256_16`) | **`e6468871a625ea35`** |
+| Frozen at | 2026-10-12 (extended-history re-freeze) |
 
 Excluded and why: `SILVER`, `XAG` (no bars). The rule is applied uniformly from the
 database; no symbol is added or dropped by hand.
 
+The hash covers the symbol list **and each symbol's bar count**, so changing the
+history (as below) yields a new hash and voids prior verdicts. The earlier
+2-year sample (`f1f17e20c26d6eea`) and all results measured on it are superseded.
+
 ## 2. Data
 
-- Source: TimescaleDB `ohlcv` (interval `1d`), provider `yfinance`, adjustment basis
-  `yfinance_auto_adjust_false`.
-- Window: 2024-08-02 → 2026-10-09 (~505–1048 bars per symbol).
+- Source: TimescaleDB `ohlcv` (interval `1d`), providers `lse`/`yfinance`, adjustment
+  basis `yfinance_auto_adjust_false`.
+- Window: **2016-10-14 → 2026-10-09 (~10 years)**, **1249–3009** bars per symbol
+  (avg ≈ 2522). Extended 2026-10-12 via `refresh-universe --lookback-days 3650`.
 - Warmup: 60 bars (signals before this are ignored).
-- **This is a short (~2-year) sample.** Any conclusion is conditional on it.
+- The ~10-year window spans multiple regimes, giving materially more OOS windows
+  than the superseded 2-year sample.
 
 ## 3. Signals under test
 
-Evaluated through the **unchanged** promotion gate, one at a time:
+Evaluated through the **unchanged** promotion gate, one at a time. All results
+below were measured on the **superseded 2-year** sample (`f1f17e20c26d6eea`) and
+are **void** on the extended sample; they are listed only to preserve the audit
+trail. Each family is re-run on `e6468871a625ea35` (see `evaluation/e3_results.md`).
 
 1. `trend` — multi-timeframe SMA filter (baseline).
 2. `breakout` — Donchian 55/20, ADX-gated (ADX ≥ 25).
 3. `composite` — fixed five-factor per-bar mean (diagnostic; ARTHA-219).
-4. `ic_composite` — walk-forward IC-weighted factor composite (weights fitted only
-   on data strictly before each OOS window). **Result: 0/73 (2026-10-12).**
-5. **Classic momentum family** — pre-registered 2026-10-12, evaluated on the same
-   frozen hash. Low-parameter, textbook signals (not alpha-zoo combinations):
+4. `ic_composite` — walk-forward IC-weighted factor composite. *(void: 0/73 on old sample)*
+5. **Classic momentum family** — pre-registered 2026-10-12:
    - `tsmom` — time-series momentum: long when trailing `lookback`-day return > 0.
    - `xsmom` — cross-sectional momentum: long the top `top_quantile` of trailing
      `lookback`-day return each date.
    Pre-registered variants: `tsmom` L=126; `xsmom` L=63 q=0.30; `xsmom` L=126 q=0.30.
-   All three are reported, with no selection of the best.
+   *(void: all 0/73 on old sample)*
+
 
 ## 4. Out-of-sample protocol
 

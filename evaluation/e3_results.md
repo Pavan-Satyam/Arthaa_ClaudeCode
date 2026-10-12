@@ -39,3 +39,30 @@ open. Five pre-declared signal families (trend, breakout, composite, ic_composit
 been evaluated on this sample and none clears the gate — the strongest honest reading is that this
 ~2-year, 73-asset sample offers no promotable edge under the current criteria.
 
+## 2026-10-12 — Extended-history sample (re-freeze, all families re-run)
+
+The ~2-year window above was the sample's biggest weakness. Extended history via
+`refresh-universe --lookback-days 3650` → **2016-10-14 → 2026-10-09 (~10 years)**, 1249–3009 bars
+per symbol. Re-froze: `evaluation/frozen_universe.json`, **sample hash `e6468871a625ea35`**
+(the hash now covers bar counts, so the old hash `f1f17e20c26d6eea` and its results are void).
+
+Same gate, same 73 symbols, `--cost-bps 10`, no save. All pre-declared families re-run:
+
+| Family | Command | Result | 2/2 | 1/2 |
+|---|---|---|---|---|
+| `trend` | `--signal trend` | **0/73** | 0 | 8 |
+| `breakout` | `--signal breakout --adx 25` | **0/73** | 0 | 4 |
+| `composite` | `--signal composite` | **0/73** | 0 | 0 |
+| `ic_composite` | `--signal ic_composite` | **0/73** | 0 | 6 |
+| `tsmom` L=126 | `--signal tsmom --lookback 126` | **0/73** | 0 | 9 |
+| `xsmom` L=63 | `--signal xsmom --lookback 63 --top-quantile 0.30` | **0/73** | 0 | 3 |
+| `xsmom` L=126 | `--signal xsmom --lookback 126 --top-quantile 0.30` | **0/73** | 0 | 5 |
+
+Raw sweeps: `evaluation/sweep10_*.txt`.
+
+**Conclusion:** extending the sample to ~10 years does not change the verdict. **No family passes both
+OOS windows on any symbol.** The negative result is now robust to sample length, not an artifact of a
+short window. E3 remains open; the gate and promotion criteria are unchanged. Further progress needs a
+different data axis (alt/fundamental/news signals), not more price-signal permutations on this sample.
+
+

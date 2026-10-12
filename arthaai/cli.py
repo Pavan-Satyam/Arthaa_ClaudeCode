@@ -1298,7 +1298,11 @@ def freeze_universe(
     selected = [row for row in coverage if row["bars"] >= min_bars and row["exchange"]]
     selected.sort(key=lambda row: row["symbol"])
     symbols = [row["symbol"] for row in selected]
-    digest = hashlib.sha256("\n".join(symbols).encode("utf-8")).hexdigest()[:16]
+    bar_counts = {row["symbol"]: int(row["bars"]) for row in selected}
+    # The hash covers the symbol list AND each symbol's bar count, so extending
+    # history (a different sample) produces a new hash and voids prior verdicts.
+    fingerprint = "\n".join(f"{sym}:{bar_counts[sym]}" for sym in symbols)
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
 
     manifest = {
         "rule": {
@@ -1307,10 +1311,12 @@ def freeze_universe(
             "source": "registered assets in TimescaleDB (interval=1d)",
         },
         "count": len(symbols),
+        "total_bars": sum(bar_counts.values()),
         "by_asset_class": dict(sorted(Counter(r["asset_class"] for r in selected).items())),
         "by_exchange": dict(sorted(Counter(r["exchange"] for r in selected).items())),
+        "bar_counts": bar_counts,
         "symbols": symbols,
-        "symbols_sha256_16": digest,
+        "sample_sha256_16": digest,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 

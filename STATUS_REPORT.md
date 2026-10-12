@@ -94,6 +94,14 @@ dispatcher. Three variants were pre-declared in the protocol and all reported on
 evaluated on this sample with no promoter. Results in `evaluation/e3_results.md`. Full suite: 446 passed,
 1 health test deselected; `compileall` clean; CI lint clean.
 
+**2026-10-12 extended-history sample update (E3):** Extended the frozen universe to ~10 years via
+`refresh-universe --lookback-days 3650` (now 2016-10-14 → 2026-10-09; 1249–3009 bars/symbol).
+`freeze-universe` now fingerprints each symbol's bar count, so re-freezing produced a new sample hash
+`e6468871a625ea35` (superseding `f1f17e20c26d6eea`; prior verdicts void). Re-ran all seven pre-declared
+variants on the extended sample: **all 0/73**, none passing both OOS windows on any symbol. The negative
+result is now robust to sample length. E3 remains open; gate and promotion criteria unchanged. Full
+suite: 446 passed, 1 health test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here
