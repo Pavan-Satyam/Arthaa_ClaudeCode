@@ -111,6 +111,17 @@ promotable edge in price/market data for this universe under the current criteri
 `evaluation/e3_results.md`. Full suite: 450 passed, 1 health test deselected; `compileall` clean; CI
 lint clean.
 
+**2026-10-12 E3 verdict — no promotable edge on available data:** E3 is closed on the current data. Eight
+pre-declared signal variants across two information axes (own-price: trend, breakout, composite,
+ic_composite, tsmom, xsmom; market-state: regime, regime_tsmom) were evaluated on a 10-year, 73-asset
+frozen sample (`e6468871a625ea35`) under the unchanged gate — every one **0/73**, no symbol passing both
+OOS windows. The result is robust to sample length and signal family, and the protocol (pre-registration,
+no OOS tuning, change control) rules out the usual artifacts. The gate requires genuine market-timing
+alpha on liquid assets, which the available price/market data does not contain. **E3 is a data problem,
+not a signal-search problem.** Recommendation: keep Law 3 (no live money) in force; treat point-in-time
+data procurement (EDGAR/macro/news) as the gating prerequisite for any further E3 attempt; redirect
+adjacent effort until an exogenous axis exists. Full details in `evaluation/e3_results.md`.
+
 ---
 
 ## 0. Next session — start here

@@ -46,8 +46,9 @@ all of it checks out as real, well-scoped, conservative engineering** — see pe
 ```
 
 This isn't a ticket count — it's a straight pass/fail from `arthaai promote`. It has failed on every
-run to date: single-asset (GLD), the 5-asset research diagnostic's own formal dry-run, and the 73-asset
-universe sweep. 0 for 0.
+run to date: single-asset (GLD), the 5-asset research diagnostic's own formal dry-run, the 73-asset
+universe sweep, and a 2026-10-12 exhaustive campaign — **8 pre-declared signal variants across 2
+information axes, on a 10-year 73-asset sample, all 0/73.** 0 for 0. See the E3 verdict (§ ARTHA-202).
 
 **Read these two numbers together, not separately.** 89% ticket completion is real, independently
 verified engineering progress — auth, guardrails, Kelly math, data integrity, CI, observability all check
@@ -69,8 +70,12 @@ Ticket velocity ≠ goal progress here. Treating 89% as "almost there" would its
 - The one diagnostic that showed a positive edge (5 assets, Sharpe 3.5) **reversed sign** on the wider
   73-asset universe (Sharpe −1.26) — that's a small-sample artifact, not a validated edge. Treating the
   5-asset number as encouraging is the specific misdirection risk sitting in this repo right now.
-- **Recommendation:** the next unit of work should attack E3 directly — a real trained/weighted factor
-  combination evaluated on the full universe — before any more adjacent capability is added.
+- **Recommendation (updated 2026-10-12):** the earlier "attack E3 directly" recommendation was executed
+  — a walk-forward IC-weighted factor composite, a classic momentum family, and an intermarket
+  risk-regime axis were built and evaluated on a 10-year, 73-asset frozen sample. **All 8 pre-declared
+  variants scored 0/73** (see the E3 verdict below). E3 is now understood as a *data* problem, not a
+  signal-search problem: the next unit of work is point-in-time data procurement (EDGAR/macro/news), not
+  another signal on the same data.
 
 ---
 
@@ -278,7 +283,8 @@ I also checked three things the author's edit claimed or added without flagging 
 ## 4. 🔴 Still the only thing that matters
 
 ### ARTHA-202 / E3 — Signal still does not beat buy-and-hold
-**Status:** `BLOCKED — RELEASE GATE` (unchanged in substance, numbers improved)
+**Status:** `NO EDGE ON AVAILABLE DATA — RELEASE GATE` (8 pre-declared variants, 2 information axes,
+10-year 73-asset sample, all 0/73)
 Live-verified this session: `arthaai backtest GLD` → edge **−16.99%** (was −32.34% before the
 duplicate-bar fix — a real, separate improvement, not the same number re-measured). `arthaai promote GLD`
 → **REJECTED**, 2 of 2 OOS windows fail: the older window fails on Sharpe (−0.17 < 1.0), the most recent
@@ -339,6 +345,19 @@ have now failed on the extended sample across two axes (own-price and market-sta
 is present in price/market data for this universe under the current criteria. The next attempt needs a
 genuinely exogenous axis (fundamentals/macro/news) with point-in-time handling. E3 remains open. See
 [evaluation/e3_results.md](evaluation/e3_results.md).
+
+**E3 verdict (2026-10-12) — no promotable edge on available data.** The E3 campaign is closed on the
+current data. Evidence: 8 pre-declared signal variants across **two information axes** (own-price:
+trend, breakout, composite, ic_composite, tsmom, xsmom; market-state: regime, regime_tsmom), evaluated
+on a **10-year, 73-asset** frozen sample (`e6468871a625ea35`) under the unchanged gate — **every one
+0/73**, no symbol passing both OOS windows. This is robust to sample length and to signal family, and
+the protocol (no OOS tuning, pre-registration, change control) rules out the usual artifacts. The gate
+requires genuine market-timing alpha on liquid assets; the available price/market data does not contain
+it. **Recommendation: E3 is not a code problem to be solved by more signals — it is a data problem.**
+Re-scope: (1) keep Law 3 (no live money) in force; (2) treat **data procurement with point-in-time
+handling** (EDGAR fundamentals, macro, or news) as the gating prerequisite for any further E3 attempt;
+(3) redirect adjacent effort (ARTHA-412, alerting/dashboard, more adapters) until an exogenous axis is
+available. Reopening E3 requires a *new* data axis, not a new signal on this sample.
 
 ---
 
