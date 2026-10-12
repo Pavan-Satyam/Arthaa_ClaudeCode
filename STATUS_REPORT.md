@@ -189,6 +189,17 @@ consults live OPA. (3) Annotated the board: Alt_Agent is a labelled stub (correc
 "DONE"), plus the two fixes above. Full suite: 489 passed, 1 health test deselected; `compileall` clean;
 CI lint clean.
 
+**2026-10-12 deeper code audit (factor registry + execution):** Independently verified the E1 claim by
+loading the registry and **computing all 445 factors** on a realistic 5-symbol panel: **444 healthy, 1
+degenerate** (`alpha101_096`, >95% NaN — rejected by validation); zoo counts 101/190/154; the 5-factor
+`DEFAULT_FACTOR_IDS` are all healthy. Verified `ts_corr` exactly matches pandas' rolling correlation (so
+`alpha101_096`'s degeneracy is the formula, not a helper bug). Found that `_validate_output` accepted
+**constant/all-zero** frames (the `regression_neut` class of bug) — now hardened to reject them
+(`test_registry_validation.py`), with a realistic-panel fix to `test_factors.py`'s compute test.
+Confirmed the 7 data/research adapters are genuinely unwired (0 external imports) and the execution
+ledger/stop path is covered by `test_ledger.py`. Full suite: 494 passed, 1 health test deselected;
+`compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here

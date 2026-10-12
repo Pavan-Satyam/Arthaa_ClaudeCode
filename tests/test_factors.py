@@ -178,13 +178,20 @@ class TestRegistry:
         from arthaai.factors.panel import build_panel
 
         reg = Registry()
-        dates = pd.date_range("2025-01-01", periods=100, freq="B", tz="UTC")
+        dates = pd.date_range("2025-01-01", periods=120, freq="B", tz="UTC")
         rng = np.random.default_rng(42)
-        close = 100 * np.cumprod(1 + rng.normal(0.001, 0.015, 100))
-        data_map = {"GLD": pd.DataFrame({
-            "ts": dates, "open": close, "high": close * 1.01, "low": close * 0.99,
-            "close": close, "volume": rng.integers(1e6, 5e6, 100).astype(float),
-        }).set_index("ts")}
+        # Realistic multi-symbol panel: open != close so price-based alphas are
+        # non-degenerate (a flat/zero output is now rejected by output validation).
+        data_map = {}
+        for sym in ("AAA", "BBB", "CCC", "DDD"):
+            close = 100 * np.cumprod(1 + rng.normal(0.001, 0.015, 120))
+            open_ = close * (1 + rng.normal(0.0, 0.005, 120))
+            data_map[sym] = pd.DataFrame({
+                "ts": dates, "open": open_,
+                "high": np.maximum(close, open_) * 1.01,
+                "low": np.minimum(close, open_) * 0.99,
+                "close": close, "volume": rng.integers(1e6, 5e6, 120).astype(float),
+            }).set_index("ts")
         panel = build_panel(data_map)
 
         result = reg.compute("alpha101_101", panel)

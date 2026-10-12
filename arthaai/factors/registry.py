@@ -316,6 +316,11 @@ class Registry:
         nan_ratio = float(np.isnan(arr).mean()) if arr.size > 0 else 1.0
         if nan_ratio > 0.95:
             raise RegistryError(f"{alpha_id}: output >95% NaN (nan_ratio={nan_ratio:.3f})")
+        finite = arr[np.isfinite(arr)]
+        if finite.size and bool(np.all(finite == finite[0])):
+            raise RegistryError(
+                f"{alpha_id}: output is constant ({finite[0]:g}) — carries no signal"
+            )
         return result
 
     def export_manifest(self) -> dict[str, Any]:
