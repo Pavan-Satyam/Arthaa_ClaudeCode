@@ -223,6 +223,16 @@ earlier board claim; `master_llm._weighted_score` now **excludes `stub` signals*
 (context-only note), with `test_llm_alt_stub.py`. Full suite: 498 passed, 1 health test deselected;
 `compileall` clean; CI lint clean.
 
+**2026-10-12 end-to-end pipeline verification (post-audit):** Ran the fully wired pipeline against the
+live DB with the offline LLM fallback. `arthaai analyze GLD` → DB_Agent neutral (ADX 14.8 choppy), News
+bullish, **Alt stub shown as "present but stubbed (not weighted)"** (confirming the fix — the verdict
+stays NEUTRAL instead of being flipped bullish), discrete Kelly 0.074 → 1.85% allocation. `arthaai
+analyze AAPL` → bullish verdict (conf 80%), discrete Kelly 0.343 → **5.00% capped by policy**; alt
+abstains for equities as designed. `arthaai execute GLD` → correctly refuses (neutral → no order);
+`arthaai execute AAPL` → **BUY $5,000 (5% of equity), stop-loss attached, breaker CLOSED, PAPER — no
+broker contacted**. No stray artifacts. The wired pipeline produces sane output after the audit fixes.
+Full suite: 498 passed, 1 health test deselected; `compileall` clean; CI lint clean.
+
 ---
 
 ## 0. Next session — start here
