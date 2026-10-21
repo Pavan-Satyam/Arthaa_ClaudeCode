@@ -1,0 +1,76 @@
+// Views for the ArthaAI model. Open with: Ctrl+Shift+P → "LikeC4: Open Preview".
+
+views {
+
+  // Whole-system context (people, ArthaAI, external systems, stores).
+  view index {
+    title 'ArthaAI — system context'
+    include *
+    autoLayout TopBottom
+  }
+
+  // ArthaAI's containers and their dependencies.
+  view containers {
+    title 'ArthaAI — containers'
+    include arthaai
+    include arthaai.*
+    include * -> *
+  }
+
+  // The agent fan-out converging at the Master LLM, then sizing.
+  view agents {
+    title 'Agents — fan-out → converge → sizing'
+    include arthaai.orchestrator
+    include arthaai.agents.*
+    include * -> *
+  }
+
+  // Ingestion providers and the stores they touch.
+  view data {
+    title 'Data ingestion & stores'
+    include arthaai.ingestion.*
+    include arthaai.agents.db_agent
+    include arthaai.agents.quant_agent
+    include arthaai.agents.news_agent
+    include timescale
+    include qdrant
+    include redpanda
+    include yfinance
+    include lse
+    include edgar
+    include fred
+    include * -> *
+  }
+
+  // The Master LLM provider chain and its fallback target.
+  view llm {
+    title 'Master LLM — provider chain'
+    include arthaai.agents.master_llm
+    include anthropic
+    include gemini
+    include local_llm
+    include vault
+    include * -> *
+  }
+
+  // Edge / ingress, auth, mTLS, and policy.
+  view edge {
+    title 'Edge, auth & policy'
+    include arthaai.gateway.*
+    include arthaai.gateway
+    include arthaai.security
+    include opa
+    include vault
+    include * -> *
+  }
+
+  // Evaluation / backtest path (E3).
+  view evaluation {
+    title 'Evaluation — backtest, factors, promotion'
+    include arthaai.backtest
+    include arthaai.factors.*
+    include timescale
+    include arthaai.cli
+    include * -> *
+  }
+}

@@ -1,0 +1,130 @@
+// ArthaAI architecture model.
+// Derived from the code in arthaai/ (module structure, imports, entrypoints),
+// NOT from the markdown reports. Regenerate if the package layout changes.
+
+specification {
+  element actor
+  element system
+  element container
+  element component
+  element database
+}
+
+model {
+
+  // ---------------------------------------------------------------- people --
+  operator = actor 'Operator / Investor' 'Runs the CLI or views the dashboard. Decision-support only — no live capital (Law 3).'
+
+  // ------------------------------------------------------------- ArthaAI ---
+  arthaai = system 'ArthaAI' 'Zero-trust multi-agent LLM framework for equities & commodities. The deterministic quant layer computes every number; the LLM only synthesises.' {
+
+    cli = container 'CLI' 'arthaai/cli.py — Typer app (analyze, execute, mark, promote, promote-sweep, backtest, ingest, refresh-*, freeze-universe, export-script, …)'
+
+    gateway = container 'Gateway' 'arthaai/gateway/app.py — FastAPI (uvicorn); slowapi rate limits; CORS' {
+      dashboard = component 'Dashboard' 'static/dashboard.html — httpOnly cookie; verdict, sizing, candles, operational alerts'
+      auth = component 'Auth' 'auth.py — bearer header or httpOnly cookie; JWT (IdP JWKS, exp required) or static token (constant-time)'
+      mtls = component 'mTLS enforcement' 'mtls.py — fail-closed XFCC check gated on trusted proxies'
+    }
+
+    orchestrator = container 'Orchestrator' 'orchestration/graph.py — LangGraph fan-out → converge; orchestration/state.py — GraphState'
+
+    agents = container 'Agents' 'arthaai/agents/*' {
+      db_agent = component 'DB Agent' 'db_agent.py + indicators.py — ADX regime selector (Donchian 55/20 vs multi-timeframe trend)'
+      quant_agent = component 'Quant Agent' 'quant_agent.py — μ/σ²/σ, signal-conditioned Kelly inputs, factor signal'
+      news_agent = component 'News Agent' 'news_agent.py — Qdrant hybrid search, circuit-breaker neutral fallback'
+      alt_agent = component 'Alt Agent (STUB)' 'alt_agent.py — synthetic physical signal; excluded from the verdict blend'
+      corr_agent = component 'Correlation Regime' 'correlation_regime.py — avg pairwise correlation (risk context, not directional)'
+      master_llm = component 'Master LLM' 'master_llm.py — provider chain anthropic → gemini → local → offline'
+      asset_manager = component 'Asset Manager' 'asset_manager.py — discrete Kelly (¼-Kelly), vol target, 5% policy cap, no shorting'
+    }
+
+    factors = container 'Factor Engine' 'arthaai/factors/* — 445 alphas (alpha101 101 · gtja191 190 · qlib158 154)' {
+      registry = component 'Registry' 'registry.py — AST discovery, helper injection, output validation (rejects NaN/inf/constant)'
+      operators = component 'Operators' 'base.py — ts_*, rank, zscore, decay_linear, safe_div, regression_neut, …'
+      panel = component 'Panel' 'panel.py — wide OHLCV panel; vwap/amount; daily de-dup'
+      composite = component 'Composite' 'composite.py — cross-sectional z-score + IC-weighted composite (embargoed)'
+      signal_family = component 'Signal families' 'momentum.py, regime.py, macro_regime.py — tsmom/xsmom, intermarket regime, macro'
+    }
+
+    backtest = container 'Backtest & Promotion' 'arthaai/backtest/* — walk-forward, look-ahead-guarded; OOS promotion gate (all windows must pass)'
+
+    execution = container 'Paper Execution' 'arthaai/execution/* — Position state machine, mandatory stop, equity-curve breaker, ledger + audit (JSONL), fill model, human approval'
+
+    ingestion = container 'Data Ingestion' 'arthaai/data/* — provider registry, refresh, provenance, PIT membership, corporate actions' {
+      providers = component 'Provider registry' 'provider.py — OHLCVProvider/ProviderRegistry, LSE + yfinance adapters, ingest_resilient, refresh_history'
+      contract = component 'Adapter contract' 'provider_contract.py — canonical provider acceptance test (columns, sorted-unique ts)'
+      actions = component 'Corporate actions' 'corporate_actions.py — splits/dividends capture + unexplained-gap audit'
+      pit = component 'PIT membership' 'membership.py — listing windows (survivorship control)'
+      asset_meta = component 'Asset metadata' 'metadata.py — exchange / asset-class enrichment'
+      research = component 'Research adapters (unwired)' 'fundamentals_pit, macro_series, news_feed wired to CLI; alternative/market/ibor/openbb/news_sentiment/fundamentals/macro inert'
+    }
+
+    security = container 'Security & Resiliency' 'security/* + resiliency/breaker.py — OPA-backed authorize_tool (in-process fallback), Vault secrets, per-dependency circuit breakers'
+
+    observability = container 'Observability' 'observability/* — Prometheus metrics, OpenTelemetry tracing, alert ring buffer'
+  }
+
+  // ------------------------------------------------- external systems ------
+  yfinance = system 'yfinance' 'Free market-data source (default provider)'
+  lse = system 'LSE API' 'London Strategic Edge market-data API (optional, configured)'
+  edgar = system 'SEC EDGAR' 'Keyless XBRL company facts — point-in-time fundamentals'
+  fred = system 'FRED' 'Keyless CSV macro series (e.g. 10y-2y term spread)'
+  anthropic = system 'Anthropic API' 'Claude — provider chain #1'
+  gemini = system 'Google Gemini API' 'REST — provider chain #2'
+  local_llm = system 'Local LLM' 'OpenAI-compatible endpoint (Ollama / LM Studio / vLLM) — provider chain #3'
+  redpanda = system 'Redpanda / Kafka' 'Ingest-event bus — confluent_kafka producer (ingest) and consumer'
+  opa = system 'OPA' 'Policy-as-code — agent tool authorization'
+  vault = system 'HashiCorp Vault' 'KV v2 secrets (process-env fallback)'
+  otel = system 'OTel collector' 'Trace export (optional obs extra)'
+  prometheus = system 'Prometheus' 'Scrapes /metrics'
+
+  // -------------------------------------------------------------- stores ---
+  timescale = database 'TimescaleDB' 'OHLCV + provenance, corporate actions, PIT membership, ingest batches, signal promotions'
+  qdrant = database 'Qdrant' 'News vector store (hybrid search)'
+
+  // ------------------------------------------------------- relationships ---
+  operator -> arthaai.cli 'runs'
+  operator -> arthaai.gateway.dashboard 'views'
+
+  // auth / mtls are components of the gateway — containment conveys the wiring,
+  // so no parent↔child relationship is drawn (LikeC4 rejects those).
+  arthaai.gateway -> arthaai.orchestrator 'analyze'
+  arthaai.gateway -> timescale 'ohlcv · promotions'
+  arthaai.gateway -> arthaai.observability 'metrics'
+
+  arthaai.cli -> arthaai.orchestrator 'analyze'
+  arthaai.cli -> arthaai.backtest 'backtest / promote / promote-sweep'
+  arthaai.cli -> arthaai.execution 'execute / mark / paper-sim'
+  arthaai.cli -> arthaai.ingestion 'ingest / refresh / migrate / freeze-universe'
+
+  arthaai.orchestrator -> arthaai.ingestion 'ingest_resilient'
+  arthaai.orchestrator -> arthaai.agents 'fan-out'
+  arthaai.orchestrator -> arthaai.agents.master_llm 'converge'
+  arthaai.agents.master_llm -> arthaai.agents.asset_manager 'verdict + confidence'
+
+  arthaai.agents.db_agent -> timescale 'load_ohlcv'
+  arthaai.agents.quant_agent -> timescale 'load_ohlcv'
+  arthaai.agents.quant_agent -> arthaai.factors.registry 'factor signal'
+  arthaai.agents.news_agent -> qdrant 'hybrid_search'
+  arthaai.agents.master_llm -> anthropic 'complete'
+  arthaai.agents.master_llm -> gemini 'complete'
+  arthaai.agents.master_llm -> local_llm 'complete'
+
+  arthaai.ingestion.providers -> yfinance 'fetch'
+  arthaai.ingestion.providers -> lse 'fetch'
+  arthaai.ingestion.providers -> timescale 'upsert'
+  arthaai.ingestion.providers -> redpanda 'publish event'
+  arthaai.ingestion.research -> edgar 'company facts'
+  arthaai.ingestion.research -> fred 'macro CSV'
+
+  arthaai.backtest -> timescale 'load_ohlcv'
+  arthaai.backtest -> arthaai.factors.registry 'signal_series'
+
+  arthaai.agents -> arthaai.security 'authorize_tool'
+  arthaai.agents.master_llm -> vault 'secrets'
+  arthaai.security -> opa 'policy decision'
+  arthaai.security -> vault 'secrets'
+
+  arthaai.observability -> otel 'traces'
+  arthaai.observability -> prometheus 'metrics'
+}
