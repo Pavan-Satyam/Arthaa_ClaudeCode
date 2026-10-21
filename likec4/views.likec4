@@ -74,6 +74,13 @@ views {
     include * -> *
   }
 
+  // Deployment of the local docker-compose stack (model in deployment.likec4).
+  deployment view deploymentLocal {
+    title 'Deployment — local stack (docker compose)'
+    include *
+    autoLayout LeftRight
+  }
+
   // ---- dynamic flows -------------------------------------------------------
 
   dynamic view analyzeFlow {

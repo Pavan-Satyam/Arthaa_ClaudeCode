@@ -1,6 +1,7 @@
 // Deployment model — matches docker-compose.yml (local stack).
 // The ArthaAI app (CLI + gateway) runs as a host process; the five services
 // (TimescaleDB, Qdrant, Redpanda, OPA, Vault) run in Docker.
+// The deployment *view* lives in views.likec4 (single views block in the project).
 
 deployment {
 
@@ -18,14 +19,5 @@ deployment {
       opa = instanceOf opa
       vault = instanceOf vault
     }
-  }
-}
-
-views {
-
-  deployment view deployment {
-    title 'Deployment — local stack (docker compose)'
-    include *
-    autoLayout LeftRight
   }
 }
