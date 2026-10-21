@@ -73,4 +73,41 @@ views {
     include arthaai.cli
     include * -> *
   }
+
+  // ---- dynamic flows -------------------------------------------------------
+
+  dynamic view analyzeFlow {
+    title 'analyze() — fan-out → converge → sizing'
+    operator -> arthaai.cli 'arthaai analyze GLD'
+    arthaai.cli -> arthaai.orchestrator 'analyze()'
+    arthaai.orchestrator -> arthaai.ingestion 'ingest_resilient (skipped with --skip-ingest)'
+    arthaai.orchestrator -> arthaai.agents.db_agent 'db_agent.run'
+    arthaai.orchestrator -> arthaai.agents.quant_agent 'quant_agent.run'
+    arthaai.orchestrator -> arthaai.agents.news_agent 'news_agent.run'
+    arthaai.agents.db_agent -> timescale 'load_ohlcv'
+    arthaai.agents.news_agent -> qdrant 'hybrid_search'
+    arthaai.agents.quant_agent -> arthaai.factors.registry 'factor signal'
+    arthaai.agents.master_llm -> local_llm 'complete (anthropic → gemini → local → offline)'
+    arthaai.agents.master_llm -> arthaai.agents.asset_manager 'verdict + confidence'
+    arthaai.agents.asset_manager -> arthaai.cli 'allocation (discrete Kelly + cap)'
+  }
+
+  dynamic view executeFlow {
+    title 'execute() — paper order with mandatory stop'
+    operator -> arthaai.cli 'arthaai execute GLD'
+    arthaai.cli -> arthaai.orchestrator 'analyze()'
+    arthaai.cli -> arthaai.security 'authorize_tool(kelly)'
+    arthaai.security -> opa 'allow?'
+    arthaai.cli -> arthaai.execution 'engine.submit — PAPER (no broker)'
+    arthaai.execution -> arthaai.cli 'order + 8% stop (breaker armed)'
+  }
+
+  dynamic view e3Flow {
+    title 'E3 promotion gate — sweep the frozen universe'
+    operator -> arthaai.cli 'promote-sweep --signal … --no-save'
+    arthaai.cli -> arthaai.backtest 'run_backtest over non-overlapping OOS windows'
+    arthaai.backtest -> timescale 'load_ohlcv'
+    arthaai.backtest -> arthaai.factors.registry 'signal_series (composite / ic_composite)'
+    arthaai.backtest -> arthaai.cli 'qualified? — 0/73 (all variants)'
+  }
 }

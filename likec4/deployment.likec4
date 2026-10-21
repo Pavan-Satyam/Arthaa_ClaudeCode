@@ -1,0 +1,31 @@
+// Deployment model — matches docker-compose.yml (local stack).
+// The ArthaAI app (CLI + gateway) runs as a host process; the five services
+// (TimescaleDB, Qdrant, Redpanda, OPA, Vault) run in Docker.
+
+deployment {
+
+  local = node 'Local dev — docker compose' {
+
+    host = node 'Workstation (host process)' {
+      app = instanceOf arthaai
+      dashboard = instanceOf arthaai.gateway.dashboard
+    }
+
+    docker = node 'Docker host' {
+      timescaledb = instanceOf timescale
+      qdrant = instanceOf qdrant
+      redpanda = instanceOf redpanda
+      opa = instanceOf opa
+      vault = instanceOf vault
+    }
+  }
+}
+
+views {
+
+  deployment view deployment {
+    title 'Deployment — local stack (docker compose)'
+    include *
+    autoLayout LeftRight
+  }
+}

@@ -8,6 +8,8 @@ specification {
   element container
   element component
   element database
+
+  deploymentNode node
 }
 
 model {
