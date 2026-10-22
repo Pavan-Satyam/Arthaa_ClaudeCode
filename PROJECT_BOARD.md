@@ -23,13 +23,14 @@ all of it checks out as real, well-scoped, conservative engineering** — see pe
 
 ## 0. Progress at a Glance
 
-*(Updated 2026-10-21 — recomputed from the current §3 Board Summary counts, which the branch author
-kept current through the E3 campaign; I re-verified those counts rather than just re-rendering old bars.)*
+*(Updated 2026-10-21, second pass — counts now include the new open ticket ARTHA-315, the E3 harness
+defect found today. **This replaces the earlier 2026-10-21 version of this section, which overstated
+the E3 evidence** — see the correction below.)*
 
-**Infrastructure & engineering tickets: 87 of 96 closed**
+**Infrastructure & engineering tickets: 87 of 97 closed**
 
 ```
-██████████████████████████████████████████████████████████░░░░░░  91%
+███████████████████████████████████████████████████████████░░░░░░░  90%
 ```
 
 | Epic | Progress | % |
@@ -37,7 +38,7 @@ kept current through the E3 campaign; I re-verified those counts rather than jus
 | ARTHA-0 Foundation & Infra | `████████████████████` | 100% |
 | ARTHA-1 Interface & Ingress | `██████████████████░░` | 90% |
 | ARTHA-2 Intelligence Core | `██████████████████░░` | 88% |
-| ARTHA-3 Oversight & Sizing | `█████████████████░░░` | 87% |
+| ARTHA-3 Oversight & Sizing | `████████████████░░░░` | 81% |
 | ARTHA-4 Action / Execution | `███████████████████░` | 93% |
 | ARTHA-5 Cross-Cutting | `████████████████████` | 100% |
 | ARTHA-6 ★ Edge Criterion | `█████████████░░░░░░░` | 67% |
@@ -45,46 +46,53 @@ kept current through the E3 campaign; I re-verified those counts rather than jus
 **The number that actually defines the goal — a proven trading edge (E3):**
 
 ```
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0%
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0%
 ```
 
-This isn't a ticket count — it's a straight pass/fail from `arthaai promote`. As of the 2026-10-12
-campaign (re-confirmed live again this session, result unchanged) it has been tested **exhaustively, not
-just repeatedly**: **11 pre-declared signal variants across 4 independent information axes**
-(own-price, market-regime, SEC-EDGAR fundamentals, FRED macro) on a frozen, hash-verified **10-year,
-73-asset** sample. **0 of 11 passed.** This supersedes the earlier "8 variants / 2 axes" figure — the
-campaign was extended twice (fundamental and macro axes added) and the conclusion held both times. See
-the full verdict under ARTHA-202 / §4 below and [evaluation/e3_results.md](evaluation/e3_results.md).
+Still 0% — no signal has passed `arthaai promote`. **But the evidence behind that 0% is much thinner
+than this board previously claimed.**
 
-**Read these two numbers together, not separately.** 91% ticket completion is real, independently
-verified engineering progress — auth, guardrails, Kelly math, data integrity, CI, observability, point-
-in-time data handling, and corporate-action tracking all check out. But almost none of the work since
-the last check-in moved E3. The two tickets ARTHA-6 is missing (E2 active-by-default, E3 itself) are the
-only two that define whether this system can ever touch real money — and neither closed this cycle.
+**Correction (2026-10-21).** Earlier today this section said E3 had been tested "exhaustively": 11
+pre-declared variants across 4 information axes on a 10-year sample, 0 of 11 passing. I wrote that after
+checking that the result files existed and agreed with each other — **not** that each run actually tested
+the signal it named. A closer check found two defects in the evaluation harness (ticket ARTHA-315):
+
+1. **5 of the 11 variants never ran their own signal.** `promote-sweep` only builds a signal map for
+   `ic_composite`, `tsmom`, and `xsmom`. `regime`, `regime_tsmom`, `value`, `macro`, and `macro_tsmom`
+   silently fell back to the **trend** baseline. Their recorded sweep files are row-for-row identical to
+   `evaluation/sweep10_trend.txt` (73/73 rows; 33/34 for `value`), and a live re-run on 2026-10-21 gives
+   identical output for `--signal trend|regime|macro|value`.
+2. **The "10-year" sweeps most likely used ~2 years.** `promote-sweep` defaults to `--limit 520` bars and
+   no recorded command overrides it. The recorded "10-year" GLD trend row (B&H +30.65%, Sharpe 1.50)
+   matches a local `--limit 520` run (+30.66%, 1.52), not a full-history run (+41.08%).
+
+**What has genuinely been tested:** about 6 own-price variants (trend, breakout, composite, ic_composite,
+tsmom, xsmom ×2) on roughly the last 2 years of data. The market-regime, SEC-fundamental, and macro axes
+are **untested**, and the 10-year robustness claim is **unverified**. The 2026-10-12 conclusion "E3 is a
+data problem, not a signal-search problem" is therefore **not yet supported** — it may still prove true,
+but nothing should be bought on it yet.
 
 **On track:**
 - Every safety-relevant piece (5% Kelly cap, drawdown breaker, kill switch, stop-loss, audit log, auth,
-  OPA policy) is real, tested, and conservatively defaulted — confirmed again this session, nothing
-  regressed.
-- The E3 campaign itself is a model of good process: pre-registered variants, a frozen/hashed sample, no
-  post-hoc tuning, and a willingness to report a decisive negative rather than keep searching. Two real
-  bugs (`regression_neut` returning all-zeros, stub alt-data leaking into the live verdict) were found
-  and fixed by that same audit discipline.
-- An explicit **hold-release decision is recorded** (2026-10-10, reaffirmed 2026-10-12): no signal is
-  promotable, Law 3 stays in force. The team knows exactly where it stands and said so in writing.
+  OPA policy) is real, tested, and conservatively defaulted — confirmed again this session.
+- The E3 *protocol* is sound (pre-registration, frozen hashed sample, no tuning on OOS windows). The defect
+  is in the harness that executes it, which is fixable and cheap to re-run.
+- Two real bugs (`regression_neut` returning all-zeros, stub alt-data leaking into the live verdict) were
+  found and fixed by audit on 2026-10-12.
+- The **hold-release decision** (2026-10-10) stands and is still correct: no signal is promotable.
 
 **Risk of misdirection, flagged now rather than later:**
-- The most recent 3 commits (`4870bc5`→`7854b72`) add a LikeC4 architecture model — genuinely useful
-  documentation, validated and building cleanly, but it's the kind of adjacent-but-not-E3 work this board
-  has repeatedly flagged. On its own, harmless; as a pattern, worth naming again.
-- The team's own 2026-10-12 verdict already re-scoped the priority correctly: **E3 is a data problem, not
-  a signal-search problem.** Every free, point-in-time-safe axis has been tried and failed. The specific
-  misdirection to avoid now is writing a *twelfth* signal variant on the *same* data — that would re-run
-  an experiment whose answer is already known. The only work that can move E3 forward is acquiring a
-  genuinely new, exogenous data source (real news/alt-data, richer point-in-time fundamentals).
-- **Recommendation (unchanged since 2026-10-12, still correct on 2026-10-21):** hold Tier 4 live-broker
-  work (correctly still not started), and make the next planning decision explicitly about data
-  procurement/budget — not more code — before touching E3 again.
+- **Buying data on the current verdict.** The recorded evidence doesn't show the free axes are exhausted;
+  most of them haven't run. See [docs/DATA_SOURCE_COMPARISON.md](docs/DATA_SOURCE_COMPARISON.md) §7–8.
+- **Trusting artifact consistency as proof.** Saved files agreeing with each other is not the same as the
+  runs testing what they claim. Any E3 result should be spot-checked for "does this differ from the
+  trend baseline?" before it's recorded.
+- The most recent 3 commits (`4870bc5`→`7854b72`) add a LikeC4 architecture model — useful documentation,
+  but adjacent to E3 rather than on it.
+- **Recommendation (revised 2026-10-21):** fix ARTHA-315, re-run all pre-registered variants with an
+  explicit 10-year `--limit` on the frozen sample, then run the pre-registered XGBoost variant, then the
+  untested free exogenous axes (CFTC COT, EIA, Form 4 / FINRA short interest, GDELT, VIX term structure).
+  Decide on data purchases only after that. Live-broker work stays on hold under Law 3.
 
 ---
 
@@ -308,7 +316,7 @@ board's claims there are accurate. Two minor cosmetic items noted but not change
 | [ARTHA-0](#epic-artha-0--foundation--infra) | Foundation & Infra | 9 | 0 | Migration tooling added, closing the last gap |
 | [ARTHA-1](#epic-artha-1--tier-1-interface--ingress) | Interface & Ingress | 9 | 1 | OAuth2.1/JWT, CORS, per-token rate limit, mTLS fail-closed + XFCC hardening all landed |
 | [ARTHA-2](#epic-artha-2--tier-2-intelligence-core) | Intelligence Core | 23 | 4 | + provider registry, per-bar provenance, data-quality CLI, standalone research adapters |
-| [ARTHA-3](#epic-artha-3--tier-3-oversight--sizing) | Oversight & Sizing | 13 | 2 | Portfolio/dynamic Kelly, VaR/ES, real human gate, costs landed; Shadow Audit split into two tickets |
+| [ARTHA-3](#epic-artha-3--tier-3-oversight--sizing) | Oversight & Sizing | 13 | 3 | Portfolio/dynamic Kelly, VaR/ES, real human gate, costs landed; Shadow Audit split into two tickets |
 | [ARTHA-4](#epic-artha-4--tier-4-action) | Action / Execution | 12 | 1 | + research-only execution adapters (Alpaca paper/Nautilus), confirmed inert |
 | [ARTHA-5](#epic-artha-5--cross-cutting) | Cross-Cutting | 9 | 1 | CI, OTel, Prometheus all landed |
 | [ARTHA-6](#epic-artha-6--the--priority-edge-criterion) | ★ Edge Criterion | 2 | 1 | **E2's mechanism works but is now off by default — see §2b. E3 still open.** |
@@ -380,6 +388,12 @@ have now failed on the extended sample across two axes (own-price and market-sta
 is present in price/market data for this universe under the current criteria. The next attempt needs a
 genuinely exogenous axis (fundamentals/macro/news) with point-in-time handling. E3 remains open. See
 [evaluation/e3_results.md](evaluation/e3_results.md).
+
+> **⚠️ Correction (2026-10-21) — the verdict below is not supported by the recorded runs.** Kept as the
+> original record, but read it with ARTHA-315: `regime`, `regime_tsmom`, `value`, `macro`, and
+> `macro_tsmom` silently ran the **trend** baseline (their sweep files are row-identical to
+> `sweep10_trend.txt`), and the "10-year" sweeps most likely used the default `--limit 520` (~2 years).
+> Genuinely tested: ~6 own-price variants on ~2 years. The campaign is **re-opened**, not closed. See §0.
 
 **E3 verdict (2026-10-12) — no promotable edge on available data.** The E3 campaign is closed on the
 current data. Evidence: 11 pre-declared signal variants across **four information axes** — own-price
@@ -471,8 +485,9 @@ a *new* data axis, not a new signal on this sample.
 | ARTHA-313a | **Paper-account reconciliation audit** (not the original ARTHA-313) | ✅ **DONE (new)** | `execution/engine.py` `shadow_account_audit()` read in full — a real, correct cash/open-position/gross-net-exposure/breaker-state snapshot for the live paper account, with explicit `discrepancies`/`status` fields. Genuinely useful. |
 | ARTHA-313 | Shadow Account Audit **as the HLD specifies it** — bias diagnostics (anchoring, disposition effect, herding) from a real manager's historical trade log | ⬜ **STILL TO DO — naming collision, not actually closed** | The feature above shares ARTHA-313's name in the board's prior edit but solves a different problem (position reconciliation vs. behavioral bias detection). This still needs a real manager's trade history and is correctly still deferred — the prior "DONE" mark for this ID is corrected back to open. |
 | ARTHA-314 | Vol targeting as an explicit sizing lever | ✅ **DONE (new, bundled with ARTHA-311's work)** | `asset_manager.size()` L152–163 — separate from dynamic Kelly; scales exposure toward `Settings.vol_target`, de-risk-only by default (`vol_max_leverage=1.0`). |
+| ARTHA-315 | **E3 evaluation harness defects** (found 2026-10-21) | 🔴 **TO DO — blocks any trustworthy E3 verdict** | (1) `promote-sweep` and `backtest` only build a signal map for `ic_composite`/`tsmom`/`xsmom` ([cli.py](arthaai/cli.py) — the `if signal in (...)` checks); every other panel signal (`regime`, `regime_tsmom`, `value`, `macro`, `macro_tsmom`) silently runs **trend**. `promote` uses `_signal_map_for` directly and is unaffected. (2) `promote-sweep` defaults to `--limit 520`, so a sweep without an explicit limit evaluates ~2 years regardless of stored history; the protocol should pin the limit. (3) Cosmetic: `promote` labels `rows[-1]` as the "most recent window", but `oos_windows` returns most-recent-first, so it is the *older* window — and that older window's metrics are what get persisted. **Fixed when:** every `VALID_SIGNALS` entry routes to its own series (with a test that each panel signal's output differs from `trend` on a fixture), the limit is explicit in the protocol, and the affected variants are re-run. |
 
-**Tier 3: 13 done / 2 to do** (ARTHA-313's re-opening, corrected this pass, accounts for the +1).
+**Tier 3: 13 done / 3 to do** (ARTHA-313's re-opening and the new ARTHA-315 account for the increase).
 
 ---
 
@@ -516,7 +531,7 @@ a *new* data axis, not a new signal on this sample.
 |---|---|---|---|
 | E1 | The factor engine computes factors | ✅ DONE (independently re-audited 2026-10-12) | Code audit loaded the registry and **computed all 445 factors** on a realistic 5-symbol panel: **444 healthy, 1 degenerate** (`alpha101_096`, >95% NaN — rejected by output validation). Zoo counts confirmed 101/190/154. The 5-factor `DEFAULT_FACTOR_IDS` (alpha101 024/009/012/023/031) are all healthy. `ts_corr` verified exactly against pandas' rolling correlation (not a helper bug). |
 | E2 | The factor signal drives sizing | ✅ **Mechanism DONE, ⚠️ off by default** | `grep factor_signal arthaai/agents/asset_manager.py` → 9 hits (was 0). Dampen-only, correctly implemented and tested — but **corrected this pass**: `Settings.factor_gate` default flipped to `False` in `135f620`, so the live pipeline doesn't apply it unless explicitly configured. |
-| E3 | The signal beats buy-and-hold OOS | ❌ **STILL TO DO — the only blocker** | Re-verified 2026-10-11 under current (factor-gate-off) defaults: edge −16.99%, Sharpe 0.75; `arthaai promote GLD` → REJECTED, 0/2 windows pass. Unchanged conclusion from the factor-gate-on run two days earlier — the gate's rejection isn't sensitive to that setting. |
+| E3 | The signal beats buy-and-hold OOS | ❌ **STILL TO DO — the only blocker** | Re-verified 2026-10-11 under current (factor-gate-off) defaults: edge −16.99%, Sharpe 0.75; `arthaai promote GLD` → REJECTED, 0/2 windows pass. **2026-10-21:** the wider campaign's coverage is overstated — 5 of 11 variants never ran their own signal and the "10-year" sweeps likely used ~2 years (ARTHA-315). No variant has passed, but most axes are untested. |
 
 **Acceptance for "★ done":** both E2 and E3 must hold, and E2 must actually be *active*, not just available.
 E3 is the entire remaining gap — and per ARTHA-219's finding, the honest next step is a real trained/weighted
