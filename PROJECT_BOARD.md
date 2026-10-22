@@ -1,6 +1,6 @@
 # ArthaAI — Project Board (Independently Verified)
 
-**Board:** ARTHA · **Branch:** `feat/arthaai-core` @ `135f620` · **Rebuilt:** 2026-09-24 · **Re-verified:** 2026-10-09, 2026-10-11 (twice)
+**Board:** ARTHA · **Branch:** `feat/arthaai-core` @ `7854b72` · **Rebuilt:** 2026-09-24 · **Re-verified:** 2026-10-09, 2026-10-11 (twice), 2026-10-12, 2026-10-21
 
 **Methodology:** Design and acceptance criteria come from [SPEC.md](SPEC.md) (invariants L1–L3, edge
 criterion E1–E3, quality gates Q1–Q4) and [arthaai-architecture.html](arthaai-architecture.html) (the
@@ -23,20 +23,23 @@ all of it checks out as real, well-scoped, conservative engineering** — see pe
 
 ## 0. Progress at a Glance
 
-**Infrastructure & engineering tickets: 77 of 87 closed**
+*(Updated 2026-10-21 — recomputed from the current §3 Board Summary counts, which the branch author
+kept current through the E3 campaign; I re-verified those counts rather than just re-rendering old bars.)*
+
+**Infrastructure & engineering tickets: 87 of 96 closed**
 
 ```
-████████████████████████████████████████████████████████░░░░░░░░  89%
+██████████████████████████████████████████████████████████░░░░░░  91%
 ```
 
 | Epic | Progress | % |
 |---|---|---|
 | ARTHA-0 Foundation & Infra | `████████████████████` | 100% |
 | ARTHA-1 Interface & Ingress | `██████████████████░░` | 90% |
-| ARTHA-2 Intelligence Core | `█████████████████░░░` | 85% |
+| ARTHA-2 Intelligence Core | `██████████████████░░` | 88% |
 | ARTHA-3 Oversight & Sizing | `█████████████████░░░` | 87% |
-| ARTHA-4 Action / Execution | `██████████████████░░` | 92% |
-| ARTHA-5 Cross-Cutting | `██████████████████░░` | 90% |
+| ARTHA-4 Action / Execution | `███████████████████░` | 93% |
+| ARTHA-5 Cross-Cutting | `████████████████████` | 100% |
 | ARTHA-6 ★ Edge Criterion | `█████████████░░░░░░░` | 67% |
 
 **The number that actually defines the goal — a proven trading edge (E3):**
@@ -45,37 +48,43 @@ all of it checks out as real, well-scoped, conservative engineering** — see pe
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0%
 ```
 
-This isn't a ticket count — it's a straight pass/fail from `arthaai promote`. It has failed on every
-run to date: single-asset (GLD), the 5-asset research diagnostic's own formal dry-run, the 73-asset
-universe sweep, and a 2026-10-12 exhaustive campaign — **8 pre-declared signal variants across 2
-information axes, on a 10-year 73-asset sample, all 0/73.** 0 for 0. See the E3 verdict (§ ARTHA-202).
+This isn't a ticket count — it's a straight pass/fail from `arthaai promote`. As of the 2026-10-12
+campaign (re-confirmed live again this session, result unchanged) it has been tested **exhaustively, not
+just repeatedly**: **11 pre-declared signal variants across 4 independent information axes**
+(own-price, market-regime, SEC-EDGAR fundamentals, FRED macro) on a frozen, hash-verified **10-year,
+73-asset** sample. **0 of 11 passed.** This supersedes the earlier "8 variants / 2 axes" figure — the
+campaign was extended twice (fundamental and macro axes added) and the conclusion held both times. See
+the full verdict under ARTHA-202 / §4 below and [evaluation/e3_results.md](evaluation/e3_results.md).
 
-**Read these two numbers together, not separately.** 89% ticket completion is real, independently
-verified engineering progress — auth, guardrails, Kelly math, data integrity, CI, observability all check
-out (§§1–2b, epics below). But it is progress on infrastructure *around* a core result that hasn't moved.
-Ticket velocity ≠ goal progress here. Treating 89% as "almost there" would itself be the misdirection.
+**Read these two numbers together, not separately.** 91% ticket completion is real, independently
+verified engineering progress — auth, guardrails, Kelly math, data integrity, CI, observability, point-
+in-time data handling, and corporate-action tracking all check out. But almost none of the work since
+the last check-in moved E3. The two tickets ARTHA-6 is missing (E2 active-by-default, E3 itself) are the
+only two that define whether this system can ever touch real money — and neither closed this cycle.
 
 **On track:**
 - Every safety-relevant piece (5% Kelly cap, drawdown breaker, kill switch, stop-loss, audit log, auth,
-  OPA policy) is real, tested, and conservatively defaulted — nothing found this pass weakens a guardrail.
-- Data-integrity bugs (duplicate daily bars, the stale STATUS_REPORT claims, the `factor_gate` default)
-  were found and fixed/corrected rather than papered over — that's healthy process, not drift.
-- An explicit **hold-release decision is recorded** (2026-10-10): no signal is promotable, Law 3 stays
-  in force. The team knows where it stands.
+  OPA policy) is real, tested, and conservatively defaulted — confirmed again this session, nothing
+  regressed.
+- The E3 campaign itself is a model of good process: pre-registered variants, a frozen/hashed sample, no
+  post-hoc tuning, and a willingness to report a decisive negative rather than keep searching. Two real
+  bugs (`regression_neut` returning all-zeros, stub alt-data leaking into the live verdict) were found
+  and fixed by that same audit discipline.
+- An explicit **hold-release decision is recorded** (2026-10-10, reaffirmed 2026-10-12): no signal is
+  promotable, Law 3 stays in force. The team knows exactly where it stands and said so in writing.
 
 **Risk of misdirection, flagged now rather than later:**
-- The last two commits added portfolio Kelly, VaR/ES, correlation regime, a provider registry, per-bar
-  provenance, and seven standalone research adapters — all real, all correctly inert, **none touching E3**.
-  Scope is growing around the stalled core result faster than the core result itself is improving.
-- The one diagnostic that showed a positive edge (5 assets, Sharpe 3.5) **reversed sign** on the wider
-  73-asset universe (Sharpe −1.26) — that's a small-sample artifact, not a validated edge. Treating the
-  5-asset number as encouraging is the specific misdirection risk sitting in this repo right now.
-- **Recommendation (updated 2026-10-12):** the earlier "attack E3 directly" recommendation was executed
-  — a walk-forward IC-weighted factor composite, a classic momentum family, and an intermarket
-  risk-regime axis were built and evaluated on a 10-year, 73-asset frozen sample. **All 8 pre-declared
-  variants scored 0/73** (see the E3 verdict below). E3 is now understood as a *data* problem, not a
-  signal-search problem: the next unit of work is point-in-time data procurement (EDGAR/macro/news), not
-  another signal on the same data.
+- The most recent 3 commits (`4870bc5`→`7854b72`) add a LikeC4 architecture model — genuinely useful
+  documentation, validated and building cleanly, but it's the kind of adjacent-but-not-E3 work this board
+  has repeatedly flagged. On its own, harmless; as a pattern, worth naming again.
+- The team's own 2026-10-12 verdict already re-scoped the priority correctly: **E3 is a data problem, not
+  a signal-search problem.** Every free, point-in-time-safe axis has been tried and failed. The specific
+  misdirection to avoid now is writing a *twelfth* signal variant on the *same* data — that would re-run
+  an experiment whose answer is already known. The only work that can move E3 forward is acquiring a
+  genuinely new, exogenous data source (real news/alt-data, richer point-in-time fundamentals).
+- **Recommendation (unchanged since 2026-10-12, still correct on 2026-10-21):** hold Tier 4 live-broker
+  work (correctly still not started), and make the next planning decision explicitly about data
+  procurement/budget — not more code — before touching E3 again.
 
 ---
 
