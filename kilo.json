@@ -1,0 +1,48 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "context7": {
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
+      "enabled": true
+    },
+    "github": {
+      "type": "local",
+      "command": [
+        "docker",
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e",
+        "GITHUB_READ_ONLY=1",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "enabled": false,
+      "timeout": 20000
+    },
+    "postgres": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@bytebase/dbhub",
+        "--transport",
+        "stdio",
+        "--dsn",
+        "postgresql://arthaai:REPLACE_WITH_READONLY_PASSWORD@localhost:5432/arthaai"
+      ],
+      "enabled": false
+    }
+  },
+  "permission": {
+    "context7_*": "allow",
+    "github_*": "ask",
+    "github_get_file_contents": "allow",
+    "github_list_commits": "allow",
+    "github_list_pull_requests": "allow",
+    "dbhub_*": "ask",
+    "dbhub_execute_sql": "ask"
+  }
+}
