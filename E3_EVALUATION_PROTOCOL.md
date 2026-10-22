@@ -113,8 +113,14 @@ sufficient, for a global edge claim.
 $env:PYTHONUTF8=1
 .\.venv\Scripts\python.exe -m arthaai.cli backfill-metadata          # populate exchange/class
 .\.venv\Scripts\python.exe -m arthaai.cli freeze-universe            # re-emit manifest + hash
-.\.venv\Scripts\python.exe -m arthaai.cli promote-sweep --signal composite --cost-bps 10
+.\.venv\Scripts\python.exe -m arthaai.cli promote-sweep --signal composite --cost-bps 10 --limit 3100 --no-save
 ```
+
+**`--limit` is required.** `promote-sweep` loads at most `--limit` bars per symbol (default 520, ~2 years).
+To evaluate the full ~10-year sample, pass `--limit 3100` (≥ the largest per-symbol bar count, 3009). The
+sweep table's **Bars** column and footer show what was actually evaluated — check it matches the sample's
+`bar_counts` before recording a verdict. *(Added 2026-10-21, ARTHA-315: sweeps recorded before this
+date omitted `--limit`, and five variants silently ran `trend`; see `evaluation/e3_results.md`.)*
 
 ## 8. Change control
 

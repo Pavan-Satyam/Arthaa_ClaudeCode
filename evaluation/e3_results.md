@@ -2,6 +2,25 @@
 
 *Protocol: [E3_EVALUATION_PROTOCOL.md](../E3_EVALUATION_PROTOCOL.md)*
 
+> **⚠️ Harness correction (2026-10-21, ARTHA-315) — read before using any result below.**
+>
+> 1. **Void — never tested their own signal:** `regime`, `regime_tsmom`, `value`, `macro`, `macro_tsmom`.
+>    `promote-sweep` only built signal maps for `ic_composite`/`tsmom`/`xsmom`, so these five silently
+>    ran the **trend** baseline. Their sweep files are row-for-row identical to `sweep10_trend.txt`
+>    (73/73; `value` 33/34). The same applied to `backtest --signal <name>`, so the single-symbol
+>    cross-checks quoted for these variants (e.g. `backtest AAPL --signal value`) were trend too.
+> 2. **"10-year" sweeps likely evaluated ~2 years.** `promote-sweep` defaults to `--limit 520` and no
+>    command below passes `--limit`. The recorded GLD trend row matches a local `--limit 520` run, not a
+>    full-history run. The extended-history results are therefore unverified.
+> 3. **Persisted/displayed metrics came from the older window.** `oos_windows()` returns most-recent-first,
+>    but `promote` and `promote-sweep` reported `rows[-1]`. Pass/fail verdicts are unaffected (every
+>    window must pass); the single-window metrics shown in sweep tables are.
+>
+> Fixed in code on 2026-10-21: every signal now routes to its own series, the engine refuses an unknown
+> signal instead of falling back to trend, sweeps print the bars evaluated and the `--limit` used, and
+> the most recent window is reported. **The verdicts below stand as historical records only; all
+> variants must be re-run with an explicit `--limit 3100` before any E3 conclusion is drawn.**
+
 ## 2026-10-12 — IC-weighted cross-sectional composite
 
 | Field | Value |

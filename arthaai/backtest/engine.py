@@ -20,6 +20,10 @@ import pandas as pd
 from arthaai.agents import asset_manager, indicators
 from arthaai.db import timescale
 
+# Signals the engine computes itself; any other signal must arrive as a
+# precomputed ``signal_series`` rather than silently degrading to trend.
+ENGINE_SIGNALS = ("trend", "breakout", "composite")
+
 
 def oos_slice(n_total: int, oos_pct: float = 0.30) -> tuple[int, int]:
     """Return (in_start, in_end) indices for an out-of-sample split.
@@ -133,6 +137,11 @@ def run_backtest(
     Returns:
         BacktestResult with all metrics.
     """
+    if signal_series is None and signal not in ENGINE_SIGNALS:
+        raise ValueError(
+            f"signal {signal!r} needs a precomputed signal_series "
+            f"(the engine only computes {', '.join(ENGINE_SIGNALS)})."
+        )
     symbol = symbol.upper()
     df = timescale.load_ohlcv(symbol, limit=limit)
     if data_slice is not None:

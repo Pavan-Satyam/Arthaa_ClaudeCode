@@ -105,6 +105,15 @@ def _signal_map_for(
     return None
 
 
+def _build_signal_map(signal: str, symbols: list[str], **kwargs) -> dict | None:
+    """``_signal_map_for`` with a one-line CLI error when the signal's inputs are missing."""
+    try:
+        return _signal_map_for(signal, symbols, **kwargs)
+    except ValueError as exc:
+        console.print(f"[red]{signal} signal unavailable:[/] {exc}")
+        raise typer.Exit(1) from exc
+
+
 @app.command()
 def health() -> None:
     """Verify TimescaleDB and Qdrant are reachable."""
@@ -767,7 +776,7 @@ def promote(
     signal = _validate_signal(signal)
     adx_threshold = adx if signal == "breakout" else 0.0
 
-    signal_map = _signal_map_for(
+    signal_map = _build_signal_map(
         signal, [symbol], limit=limit, lookback=lookback, top_quantile=top_quantile
     )
 
@@ -801,7 +810,8 @@ def promote(
         )
     console.print(t)
 
-    lo, hi, res, ev = rows[-1]  # most recent window (persisted metrics)
+    # oos_windows() returns windows most-recent-first; these metrics are persisted.
+    lo, hi, res, ev = rows[0]
     border = "green" if qualified else "red"
     verdict_str = "[bold green]QUALIFIED[/] — promoted" if qualified else "[bold red]REJECTED[/]"
     failures = "; ".join(f"window {l}–{h}: {e.reason}" for l, h, _, e in rows if not e.qualified)
@@ -811,6 +821,7 @@ def promote(
         f"most recent window {lo}–{hi}: long-only {res.long_only_return:+.2%} vs "
         f"B&H {res.buy_hold_return:+.2%} · Sharpe {res.sharpe:.2f} · "
         f"MaxDD {res.max_drawdown:.1%} · trades {res.trades} · hit {res.hit_rate:.0%}\n"
+        f"evaluated {hi} bars (--limit {limit}) · "
         f"costs: {cost_bps:g} bps · vol target: {vol_target or 'off'}\n\n"
         f"[dim]{failures or 'all windows passed'}[/]",
         title="Promotion result", border_style=border,
@@ -868,6 +879,7 @@ def promote_sweep(
     save: bool = typer.Option(True, help="Persist each result to the DB."),
 ) -> None:
     """Sweep the promotion gate across a universe and list every qualified symbol."""
+    from arthaai.backtest.engine import ENGINE_SIGNALS
     from arthaai.db import timescale
 
     signal = _validate_signal(signal)
@@ -875,14 +887,14 @@ def promote_sweep(
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
     signal_map = None
-    if signal in ("ic_composite", "tsmom", "xsmom"):
+    if signal not in ENGINE_SIGNALS:
         with console.status(f"[bold]computing {signal} signal over {len(syms)} symbols…"):
-            signal_map = _signal_map_for(
+            signal_map = _build_signal_map(
                 signal, syms, limit=limit, lookback=lookback, top_quantile=top_quantile
             )
 
     t = Table(title=f"Promotion sweep · {signal} · {len(syms)} symbols")
-    for col in ("Symbol", "Windows", "Sharpe", "Long-only", "B&H", "Verdict"):
+    for col in ("Symbol", "Bars", "Windows", "Sharpe", "Long-only", "B&H", "Verdict"):
         t.add_column(col, justify="right" if col not in ("Symbol", "Verdict") else "left")
 
     qualified_symbols: list[str] = []
@@ -895,18 +907,19 @@ def promote_sweep(
                     vol_target=vol_target, windows=windows, signal_map=signal_map,
                 )
         except ValueError as exc:
-            t.add_row(sym, "—", "—", "—", "—", f"[yellow]{str(exc)[:48]}[/]")
+            t.add_row(sym, "—", "—", "—", "—", "—", f"[yellow]{str(exc)[:48]}[/]")
             continue
         if result is None:
-            t.add_row(sym, "—", "—", "—", "—", "[yellow]no data[/]")
+            t.add_row(sym, "—", "—", "—", "—", "—", "[yellow]no data[/]")
             continue
         qualified, _note, rows, evals = result
         passes = sum(1 for e in evals if e.qualified)
-        res = rows[-1][2]
+        # Most recent window first; its upper bound is the number of bars evaluated.
+        _lo, bars, res, _ev = rows[0]
         if qualified:
             qualified_symbols.append(sym)
         t.add_row(
-            sym, f"{passes}/{len(evals)}", f"{res.sharpe:.2f}",
+            sym, str(bars), f"{passes}/{len(evals)}", f"{res.sharpe:.2f}",
             f"{res.long_only_return:+.2%}", f"{res.buy_hold_return:+.2%}",
             "[green]QUALIFIED[/]" if qualified else "[red]REJECTED[/]",
         )
@@ -923,6 +936,10 @@ def promote_sweep(
     console.print(t)
     console.print(
         f"[bold]{len(qualified_symbols)}[/] qualified: {qualified_symbols or 'none'}"
+    )
+    console.print(
+        f"[dim]Evaluated at most the last {limit} bars per symbol (--limit {limit}); "
+        "raise --limit to use more stored history.[/]"
     )
 
     # Operational/monitoring alert only — never an execution trigger.
@@ -955,17 +972,18 @@ def backtest(
 ) -> None:
     """Walk-forward backtest with look-ahead guards (offline evaluation)."""
     from arthaai.backtest import run_backtest
+    from arthaai.backtest.engine import ENGINE_SIGNALS
 
     signal = _validate_signal(signal)
     signal_series = None
-    if signal in ("ic_composite", "tsmom", "xsmom"):
+    if signal not in ENGINE_SIGNALS:
         from arthaai.factors.panel import align_signal_to_ohlcv
 
         with console.status(f"[bold]computing {signal} signal…"):
-            signal_map = _signal_map_for(
+            signal_map = _build_signal_map(
                 signal, [symbol], limit=limit, lookback=lookback, top_quantile=top_quantile
             )
-        column = signal_map.get(symbol.upper())
+        column = (signal_map or {}).get(symbol.upper())
         if column is None:
             console.print(f"[red]{signal} unavailable for {symbol.upper()}[/]")
             raise typer.Exit(1)

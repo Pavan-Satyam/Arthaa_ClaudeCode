@@ -15,6 +15,16 @@ information axes**, on a **10-year, 73-asset** frozen sample, all **0 qualified*
 ([§8.3](#83-e3--the-edge-gate--fails)). E3 is a **data problem, not a signal-search problem**
 — verdict and evidence in [evaluation/e3_results.md](evaluation/e3_results.md).
 
+**Correction (2026-10-21, ARTHA-315):** the E3 claim above overstates what ran. Five of the eleven
+variants (`regime`, `regime_tsmom`, `value`, `macro`, `macro_tsmom`) silently ran the `trend` baseline
+because `promote-sweep`/`backtest` only built signal maps for `ic_composite`/`tsmom`/`xsmom`, and the
+"10-year" sweeps omitted `--limit` (default 520 bars, ~2 years). Genuinely tested: ~6 own-price variants
+on ~2 years; the market-state, fundamental, and macro axes are untested. The harness is fixed in code
+(every signal routes to its own series; `run_backtest` refuses unknown signals; sweeps show bars and
+`--limit`; the most recent OOS window is reported; the FRED fetcher no longer caches HTML error pages) —
+see `tests/test_signal_routing.py`. E3 stays failed **and re-opened** pending a re-run with
+`--limit 3100`.
+
 **Accuracy note (2026-10-12):** this revision reconciles the report against the code after
 **three independent audit passes** (details in [§10](#10-known-issues--defects)). The audits
 found and fixed a latent all-zero factor primitive (`regression_neut`), a factor-registry
