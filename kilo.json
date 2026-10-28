@@ -42,7 +42,8 @@
     "github_get_file_contents": "allow",
     "github_list_commits": "allow",
     "github_list_pull_requests": "allow",
-    "dbhub_*": "ask",
-    "dbhub_execute_sql": "ask"
+    "postgres_*": "ask",
+    "postgres_execute_sql": "ask",
+    "muse-knowledge_*": "allow"
   }
 }
