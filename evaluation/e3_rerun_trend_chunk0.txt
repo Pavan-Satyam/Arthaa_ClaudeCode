@@ -1,0 +1,29 @@
+                 Promotion sweep · trend · 19 symbols                 
+┌────────┬──────┬─────────┬────────┬───────────┬──────────┬──────────┐
+│ Symbol │ Bars │ Windows │ Sharpe │ Long-only │      B&H │ Verdict  │
+├────────┼──────┼─────────┼────────┼───────────┼──────────┼──────────┤
+│ AAPL   │ 2512 │     0/2 │   0.07 │   +37.89% │  +81.53% │ REJECTED │
+│ AMZN   │ 2512 │     0/2 │  -0.27 │    +1.78% │  +59.65% │ REJECTED │
+│ CRM    │ 2512 │     0/2 │  -0.95 │   +20.05% │  -11.50% │ REJECTED │
+│ DBC    │ 2512 │     0/2 │  -1.53 │   +13.60% │  +55.42% │ REJECTED │
+│ EFA    │ 2512 │     0/2 │  -0.17 │    -0.36% │  +38.82% │ REJECTED │
+│ GDX    │ 2512 │     0/2 │  -0.13 │  +110.39% │ +189.64% │ REJECTED │
+│ HD     │ 2512 │     0/2 │  -0.36 │   -19.07% │  -11.75% │ REJECTED │
+│ INTC   │ 2512 │     0/2 │  -0.69 │   -21.66% │  +80.60% │ REJECTED │
+│ KO     │ 2512 │     0/2 │  -1.22 │   +16.64% │  +54.96% │ REJECTED │
+│ MRK    │ 2512 │     0/2 │  -0.23 │   +59.46% │  +22.19% │ REJECTED │
+│ OIH    │ 2512 │     0/2 │  -0.76 │   +18.81% │  +37.86% │ REJECTED │
+│ PG     │ 2512 │     0/2 │  -0.55 │   -20.28% │   +9.11% │ REJECTED │
+│ SLV    │ 2512 │     0/2 │   0.47 │  +154.68% │ +135.70% │ REJECTED │
+│ TSLA   │ 2512 │     0/2 │  -0.53 │   +24.80% │  +75.42% │ REJECTED │
+│ USO    │ 2512 │     0/2 │  -0.19 │  +103.64% │ +146.34% │ REJECTED │
+│ WMT    │ 2512 │     0/2 │   0.25 │   +42.93% │ +121.50% │ REJECTED │
+│ XLF    │ 2512 │     0/2 │  -0.33 │   +18.06% │  +47.38% │ REJECTED │
+│ XLU    │ 2512 │     0/2 │  -0.75 │   +15.89% │  +39.59% │ REJECTED │
+│ XOP    │ 2512 │     0/2 │  -0.53 │   +17.08% │  +57.02% │ REJECTED │
+└────────┴──────┴─────────┴────────┴───────────┴──────────┴──────────┘
+0 qualified: none
+Bars evaluated per symbol — min 2512, median 2512, max 2512 (--limit 3100).
+Evaluated at most the last 3100 bars per symbol (--limit 3100); raise --limit 
+to use more stored history.
+ALERT promotion_sweep: 0/19 qualified {'signal': 'trend', 'qualified': 0, 'universe': 19}

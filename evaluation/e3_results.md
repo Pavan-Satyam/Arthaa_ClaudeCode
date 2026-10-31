@@ -145,6 +145,58 @@ variants have now failed across **four** information axes (own-price, market-sta
 Every tractable, free, point-in-time-safe axis available without new data procurement has been tested and
 none clears the gate. The conclusion recorded above stands and is now exhaustive for the data at hand.
 
+## 2026-10-24 — Verified re-run on a genuine 10-year sample (harness fixed + history densified)
+
+**Why this section exists.** The 2026-10-12 "extended-history" runs above are void under the §7 correction:
+they never passed `--limit`, so `promote-sweep` used its default (520 ≈ 2 years). This section is the
+re-run those runs required, and it also **densified the stored history**, which was the deeper problem.
+
+**Sample repair (step 1a.5).** The frozen universe's stored daily bars were sparse — several symbols had
+huge gaps inside a 10-year span (ABBV 544 bars, GLD 1459, XLC 2099, MSFT 1647). Audited with the new
+`arthaai history-depth`, then rebuilt cleanly: delete the universe's `1d` rows →
+`refresh-universe --symbols <frozen 73> --lookback-days 3650 --provider yfinance` → `repair_daily_duplicates`.
+Result: **2016-10-26 → 2026-10-23 (~10 years)**, bars per symbol **min 1258 · median 2512 · max 2512**
+(only BITO, a 2021 listing, and XLC, a 2018 fund, are legitimately short). `history-depth` now passes the
+E3 gate. Frozen sample hash unchanged: **`e6468871a625ea35`** (73 symbols).
+
+**Guard active.** `promote-sweep` now prints bars evaluated and the `--limit` used; every run below
+evaluated **median 2512 bars** (≈10y) with no shallow-table warning. This is the first E3 run whose window
+is *verifiably* ~10 years.
+
+Command pattern (all variants, `--cost-bps 10`, `--warmup 60`, `--windows 2`, `--no-save`):
+`arthaai promote-sweep --symbols <frozen 73> --signal <name> --limit 3100 ...`
+
+| Variant | Command | Result | 2/2 | 1/2 |
+|---|---|---|---|---|
+| `trend` | `--signal trend` | **0/73** | 0 | 0 |
+| `breakout` | `--signal breakout --adx 25` | **0/73** | 0 | 0 |
+| `composite` | `--signal composite` | **0/73** | 0 | 0 |
+| `ic_composite` | `--signal ic_composite` | **0/73** | 0 | 1 |
+| `tsmom` L=126 | `--signal tsmom --lookback 126` | **0/73** | 0 | 1 |
+| `xsmom` L=63 | `--signal xsmom --lookback 63 --top-quantile 0.30` | **0/73** | 0 | 1 |
+| `xsmom` L=126 | `--signal xsmom --lookback 126 --top-quantile 0.30` | **0/73** | 0 | 2 |
+| `regime` | `--signal regime` | **0/73** | 0 | 0 |
+| `regime_tsmom` | `--signal regime_tsmom --lookback 126` | **0/73** | 0 | 0 |
+| `value` | `--signal value` (equity subset: 45 with fundamentals, 28 no-data) | **0/45** | 0 | 0 |
+| `macro` | `--signal macro` | **0/73** | 0 | 1 |
+| `macro_tsmom` | `--signal macro_tsmom --lookback 126` | **0/73** | 0 | 0 |
+| `xgb_zoo` | `--signal xgb_zoo` (new family 9) | **0/73** | 0 | 3 |
+
+- `trend` as a single 73-symbol process crashed natively (Windows rc `0xC0000409`); re-run in 4 chunks
+  (no crash) → 0/73, 8 symbols passed one window in the earlier (void) run.
+- `xgb_zoo` is the architecture doc's own recipe (pre-registered family 9): volatility-adjusted target,
+  strictly backward-looking features, EMA(5)+hysteresis position mapping. It does **not** clear the gate.
+
+Raw sweep tables: `evaluation/e3_rerun_<variant>.txt` (trend split as `e3_rerun_trend_chunk{0..3}.txt`).
+
+**Conclusion:** on a genuine, gap-free ~10-year sample and with the harness fixed, **no pre-registered
+family clears the promotion gate** — **thirteen** variants across five information axes (own-price,
+market-state, fundamental, macro, and now a pre-registered ML model) all fail. The negative verdict is
+therefore robust and now trustworthy: it is **not** an artifact of a short or gappy window, and **not** an
+artifact of the earlier signal-routing bug. E3 remains open; the gate and criteria are unchanged. Further
+progress requires a genuinely new exogenous data axis or new data procurement (estimate revisions,
+licensing, survivorship-free history) — **not** more permutations of the same price/market data.
+
 
 
 

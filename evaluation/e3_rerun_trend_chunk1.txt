@@ -1,0 +1,28 @@
+                 Promotion sweep · trend · 18 symbols                 
+┌────────┬──────┬─────────┬────────┬───────────┬──────────┬──────────┐
+│ Symbol │ Bars │ Windows │ Sharpe │ Long-only │      B&H │ Verdict  │
+├────────┼──────┼─────────┼────────┼───────────┼──────────┼──────────┤
+│ ABBV   │ 2512 │     0/2 │  -0.34 │   +13.94% │  +73.36% │ REJECTED │
+│ BAC    │ 2512 │     0/2 │   0.35 │   +40.27% │  +56.92% │ REJECTED │
+│ CSCO   │ 2512 │     0/2 │  -0.04 │   +46.98% │ +107.72% │ REJECTED │
+│ DIA    │ 2512 │     0/2 │  -0.41 │    +9.97% │  +37.71% │ REJECTED │
+│ EWJ    │ 2512 │     0/2 │  -0.04 │   -20.14% │  +42.79% │ REJECTED │
+│ GDXJ   │ 2512 │     0/2 │  -0.10 │   +71.99% │ +193.15% │ REJECTED │
+│ HYG    │ 2512 │     0/2 │  -1.77 │    -0.31% │   -0.16% │ REJECTED │
+│ IWM    │ 2512 │     0/2 │  -0.42 │    +1.02% │  +43.30% │ REJECTED │
+│ LQD    │ 2512 │     0/2 │  -0.99 │    +2.96% │   -4.72% │ REJECTED │
+│ MSFT   │ 2512 │     0/2 │  -0.83 │    -5.07% │  +31.56% │ REJECTED │
+│ ORCL   │ 2512 │     0/2 │  -1.19 │    +4.86% │  +15.04% │ REJECTED │
+│ PPLT   │ 2512 │     0/2 │   0.09 │   +92.54% │  +69.46% │ REJECTED │
+│ SPY    │ 2512 │     0/2 │  -0.39 │   +32.68% │  +57.53% │ REJECTED │
+│ UNG    │ 2512 │     0/2 │  -0.69 │   -19.22% │  -53.94% │ REJECTED │
+│ UUP    │ 2512 │     0/2 │  -1.04 │    +1.29% │   +4.55% │ REJECTED │
+│ XLB    │ 2512 │     0/2 │  -0.97 │    -8.55% │  +24.80% │ REJECTED │
+│ XLI    │ 2512 │     0/2 │  -0.31 │   +23.74% │  +46.39% │ REJECTED │
+│ XLV    │ 2512 │     0/2 │  -0.64 │   +21.51% │  +28.55% │ REJECTED │
+└────────┴──────┴─────────┴────────┴───────────┴──────────┴──────────┘
+0 qualified: none
+Bars evaluated per symbol — min 2512, median 2512, max 2512 (--limit 3100).
+Evaluated at most the last 3100 bars per symbol (--limit 3100); raise --limit 
+to use more stored history.
+ALERT promotion_sweep: 0/18 qualified {'signal': 'trend', 'qualified': 0, 'universe': 18}
