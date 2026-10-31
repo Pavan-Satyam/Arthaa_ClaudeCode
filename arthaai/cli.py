@@ -26,7 +26,18 @@ console = Console()
 VALID_SIGNALS = (
     "trend", "breakout", "composite", "ic_composite", "tsmom", "xsmom",
     "regime", "regime_tsmom", "value", "macro", "macro_tsmom",
+    "cftc", "eia", "insider", "vix_regime", "xgb_zoo",
 )
+
+# E3 protocol target history: ~10 years of daily bars. A real 10-year US session
+# window is ~2512 bars (holidays), so this floor is set just below that: it still
+# catches a shallow table (the failure mode that silently reproduced the void
+# "~2-year" result even when --limit was large, because ``timescale.load_ohlcv`` is
+# a SQL LIMIT on the most-recent bars and cannot pad a shallow table) without
+# false-positiving a genuinely full history. The guards inspect the bars actually
+# loaded, never the ``--limit`` integer, and the sweep warns on the *median* so a
+# single recent symbol (e.g. a post-2020 listing) does not flag the whole run.
+E3_MIN_BARS = 2400
 
 
 def _validate_signal(signal: str) -> str:
@@ -36,6 +47,25 @@ def _validate_signal(signal: str) -> str:
         console.print(f"[red]--signal must be one of: {', '.join(VALID_SIGNALS)}[/]")
         raise typer.Exit(2)
     return normalized
+
+
+def _warn_short_history(bars: int, limit: int, *, context: str) -> bool:
+    """Warn when a run's *actual* stored bars fall below the E3 protocol minimum.
+
+    Inspects the bars actually loaded (``len(df)``), not the ``--limit`` integer:
+    ``timescale.load_ohlcv`` returns at most the most-recent ``limit`` rows, so a
+    shallow table yields fewer bars than requested with no error. Advisory only —
+    single-symbol spot-checks still run — but a sub-minimum E3 run must be visible.
+    Returns True when the history is short.
+    """
+    if bars < E3_MIN_BARS:
+        console.print(
+            f"[yellow]warning:[/] {context} evaluated only [bold]{bars}[/] bars "
+            f"(< E3 minimum {E3_MIN_BARS}, ~10y); --limit {limit} cannot pad a shallow "
+            "table. Backfill history before drawing an E3 conclusion."
+        )
+        return True
+    return False
 
 
 def _expand_universe(symbols: list[str]) -> list[str]:
@@ -102,6 +132,30 @@ def _signal_map_for(
         return macro_signal_map(
             _expand_universe(symbols), kind=signal, lookback=lookback, limit=limit
         )
+    if signal == "cftc":
+        from arthaai.factors.exogenous import cftc_signal_map
+
+        return cftc_signal_map(_expand_universe(symbols), limit=limit)
+    if signal == "eia":
+        from arthaai.factors.exogenous import eia_signal_map
+
+        return eia_signal_map(_expand_universe(symbols), limit=limit)
+    if signal == "insider":
+        from arthaai.factors.exogenous import insider_signal_map
+
+        # The 63-day flow window is pre-registered (protocol §12); do not override it
+        # with the generic --lookback default (126), which belongs to the momentum axes.
+        return insider_signal_map(
+            _expand_universe(symbols), limit=limit, top_quantile=top_quantile
+        )
+    if signal == "vix_regime":
+        from arthaai.factors.exogenous import vix_regime_signal_map
+
+        return vix_regime_signal_map(_expand_universe(symbols), limit=limit)
+    if signal == "xgb_zoo":
+        from arthaai.factors.xgb_signal import xgb_signal_map
+
+        return xgb_signal_map(_expand_universe(symbols), limit=limit)
     return None
 
 
@@ -812,6 +866,7 @@ def promote(
 
     # oos_windows() returns windows most-recent-first; these metrics are persisted.
     lo, hi, res, ev = rows[0]
+    _warn_short_history(hi, limit, context=f"{symbol} · {signal}")
     border = "green" if qualified else "red"
     verdict_str = "[bold green]QUALIFIED[/] — promoted" if qualified else "[bold red]REJECTED[/]"
     failures = "; ".join(f"window {l}–{h}: {e.reason}" for l, h, _, e in rows if not e.qualified)
@@ -898,6 +953,7 @@ def promote_sweep(
         t.add_column(col, justify="right" if col not in ("Symbol", "Verdict") else "left")
 
     qualified_symbols: list[str] = []
+    bars_seen: list[int] = []
     for sym in syms:
         try:
             with console.status(f"[bold]promoting {sym}…"):
@@ -916,6 +972,7 @@ def promote_sweep(
         passes = sum(1 for e in evals if e.qualified)
         # Most recent window first; its upper bound is the number of bars evaluated.
         _lo, bars, res, _ev = rows[0]
+        bars_seen.append(bars)
         if qualified:
             qualified_symbols.append(sym)
         t.add_row(
@@ -937,6 +994,20 @@ def promote_sweep(
     console.print(
         f"[bold]{len(qualified_symbols)}[/] qualified: {qualified_symbols or 'none'}"
     )
+    if bars_seen:
+        # Report the bars *actually* stored, not the --limit integer: load_ohlcv is a
+        # SQL LIMIT on most-recent bars and silently returns fewer on a shallow table.
+        median_bars = sorted(bars_seen)[len(bars_seen) // 2]
+        console.print(
+            f"[dim]Bars evaluated per symbol — min {min(bars_seen)}, "
+            f"median {median_bars}, max {max(bars_seen)} (--limit {limit}).[/]"
+        )
+        if median_bars < E3_MIN_BARS:
+            console.print(
+                f"[yellow]warning:[/] median stored history is [bold]{median_bars}[/] "
+                f"bars (< E3 target {E3_MIN_BARS}, ~10y); --limit {limit} cannot pad a "
+                "shallow table. Backfill history before drawing an E3 conclusion."
+            )
     console.print(
         f"[dim]Evaluated at most the last {limit} bars per symbol (--limit {limit}); "
         "raise --limit to use more stored history.[/]"
@@ -998,6 +1069,7 @@ def backtest(
     except ValueError as exc:
         console.print(f"[red]Backtest failed:[/] {exc}")
         raise typer.Exit(1) from exc
+    _warn_short_history(res.bars, limit, context=f"{res.symbol} · {signal}")
     t = Table(title=f"Backtest · {res.symbol} · {signal}" + (f" · ADX≥{adx:g}" if adx else ""), show_header=False)
     t.add_column("k"); t.add_column("v", justify="right")
     t.add_row("bars / trades", f"{res.bars} / {res.trades}")
@@ -1213,6 +1285,54 @@ def refresh_universe_command(
     )
     if any(result.provider == "error" for result in results):
         raise typer.Exit(1)
+
+
+@app.command("history-depth")
+def history_depth_command(
+    symbols: str = typer.Option("", help="Comma-separated symbols; default = frozen universe."),
+) -> None:
+    """Audit stored bar depth vs the ~10-year E3 target before any sweep.
+
+    Uses one aggregate query (not per-symbol frame loads), reporting each symbol's
+    stored bars and first/last session. A shallow table is caught *before* a run:
+    ``promote-sweep``/``backtest`` cannot pad a short table even with a large
+    ``--limit`` (``load_ohlcv`` is a SQL LIMIT on recent bars). Exits non-zero when
+    the median depth is below the E3 target.
+    """
+    from arthaai.db import timescale
+    from arthaai.eval.universe import load_frozen_universe
+    from arthaai.research.data_quality import depth_from_rows, depth_summary
+
+    if symbols.strip():
+        syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        try:
+            syms = load_frozen_universe()
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]no frozen universe:[/] {exc}")
+            raise typer.Exit(1) from exc
+
+    with console.status(f"[bold]auditing depth over {len(syms)} symbols…"):
+        reports = depth_from_rows(timescale.ohlcv_depth(syms))
+    summary = depth_summary(reports, min_bars=E3_MIN_BARS)
+
+    t = Table(title=f"Stored-history depth · {len(syms)} symbols")
+    for col in ("Symbol", "Bars", "First", "Last"):
+        t.add_column(col, justify="right" if col != "Symbol" else "left")
+    for r in sorted(reports, key=lambda item: item.bars):
+        t.add_row(r.symbol, str(r.bars), r.first_date or "—", r.last_date or "—")
+    console.print(t)
+    console.print(
+        f"bars: min {summary['min']} · median {summary['median']} · max {summary['max']} "
+        f"· below {E3_MIN_BARS}: {summary['below_min']}/{summary['count']}"
+    )
+    if not summary["median_ok"]:
+        console.print(
+            f"[yellow]warning:[/] median stored history {summary['median']} < E3 target "
+            f"{E3_MIN_BARS} (~10y). Backfill via `refresh-universe` before running sweeps."
+        )
+        raise typer.Exit(1)
+    console.print("[green]depth OK[/] — stored history supports a ~10-year E3 run.")
 
 
 @app.command("audit-history")

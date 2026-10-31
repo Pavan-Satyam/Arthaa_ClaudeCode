@@ -12,6 +12,92 @@ import pandas as pd
 
 
 @dataclass
+class DepthReport:
+    """Stored-history depth for one symbol (bars + first/last session)."""
+
+    symbol: str
+    bars: int
+    first_date: str | None
+    last_date: str | None
+
+
+def history_depth(
+    loader: Callable[[str], pd.DataFrame],
+    symbols: list[str],
+) -> list[DepthReport]:
+    """Row count and first/last stored session per symbol (no calendar needed).
+
+    ``loader(symbol)`` must return a frame with a ``ts`` column or a DatetimeIndex.
+    For a DB path prefer ``depth_from_rows`` with an aggregate query so full frames
+    are not materialized. This is the cheap pre-flight check for an E3 run: it tells
+    you whether the stored history can support a ~10-year evaluation, independent of
+    the ``--limit`` a command is asked for (``load_ohlcv`` is a SQL LIMIT on the
+    most-recent bars and cannot pad a shallow table).
+    """
+    reports: list[DepthReport] = []
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).upper()
+        frame = loader(symbol)
+        if frame is None or frame.empty:
+            reports.append(DepthReport(symbol=symbol, bars=0, first_date=None, last_date=None))
+            continue
+        if "ts" in frame.columns:
+            timestamps = pd.to_datetime(frame["ts"], utc=True, errors="coerce")
+        else:
+            timestamps = pd.to_datetime(frame.index, utc=True, errors="coerce")
+        valid = timestamps[~pd.isna(timestamps)]
+        if len(valid) == 0:
+            reports.append(DepthReport(symbol=symbol, bars=0, first_date=None, last_date=None))
+            continue
+        reports.append(
+            DepthReport(
+                symbol=symbol,
+                bars=len(valid),
+                first_date=pd.Timestamp(valid.min()).date().isoformat(),
+                last_date=pd.Timestamp(valid.max()).date().isoformat(),
+            )
+        )
+    return reports
+
+
+def depth_from_rows(rows: list[tuple[str, int, Any, Any]]) -> list[DepthReport]:
+    """Build ``DepthReport``s from aggregated DB rows ``(symbol, bars, first, last)``.
+
+    Lets the ``history-depth`` command use a single ``GROUP BY`` aggregate instead of
+    loading full OHLCV frames per symbol.
+    """
+    reports: list[DepthReport] = []
+    for symbol, bars, first_ts, last_ts in rows:
+        first = pd.Timestamp(first_ts).date().isoformat() if first_ts is not None else None
+        last = pd.Timestamp(last_ts).date().isoformat() if last_ts is not None else None
+        reports.append(
+            DepthReport(
+                symbol=str(symbol).upper(),
+                bars=bars if bars is not None else 0,
+                first_date=first,
+                last_date=last,
+            )
+        )
+    return reports
+
+
+def depth_summary(reports: list[DepthReport], *, min_bars: int) -> dict[str, Any]:
+    """Summarize depth across symbols and flag a globally shallow history."""
+    bars = sorted(r.bars for r in reports if r.bars > 0)
+    if not bars:
+        return {"count": 0, "min": 0, "median": 0, "max": 0, "below_min": 0, "median_ok": False}
+    median = bars[len(bars) // 2]
+    return {
+        "count": len(bars),
+        "min": bars[0],
+        "median": median,
+        "max": bars[-1],
+        "below_min": sum(1 for b in bars if b < min_bars),
+        "median_ok": median >= min_bars,
+    }
+
+
+@dataclass
 class HistoryCoverage:
     symbol: str
     calendar: str

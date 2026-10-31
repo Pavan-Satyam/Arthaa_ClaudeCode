@@ -78,6 +78,42 @@ trail. Each family is re-run on `e6468871a625ea35` (see `evaluation/e3_results.m
    - `macro_tsmom` — the macro gate applied to each symbol's own `tsmom` L=126.
    Both are reported, with no selection of the best.
 
+9. **XGBoost over the factor zoo** (`xgb_zoo`) — pre-registered 2026-10-23, the
+   architecture doc's own recipe ("alpha factors → tabular model → signal → gate").
+   - **Target:** volatility-adjusted forward return (1-day forward return ÷ trailing
+     20-day realized vol), *not* raw forward return, so the pooled model is not
+     dominated by asset-class beta. An `asset_class` categorical (equity vs
+     commodity ETF) separates the two groups.
+   - **Features:** strictly **backward-looking** — trailing returns (1/5/20/60d),
+     20-day realized vol, 20/60-day MA distance, raw `tsmom`/`xsmom` L=126, and the
+     qlib158 beta/corr/cord windows. Composite/meta-signals (`ic_composite`) are
+     **excluded** as features because their weights are fit over the whole panel and
+     would leak across the walk-forward boundary.
+   - **Walk-forward:** expanding-window fit, predict into the next slice. Fixed
+     hyperparameters (max_depth 3, n_estimators 300, learning_rate 0.05, subsample
+     0.8, colsample 0.8, λ=1.0) chosen in-sample; **no tuning on any OOS window**.
+   - **Position mapping:** EMA(5) smoothing + hysteresis — enter long above the 60th
+     percentile of the smoothed score's own trailing 252-day window, exit below the
+     40th — to control turnover under the 10 bps cost.
+10. **Commodity positioning** (`cftc`) — pre-registered 2026-10-23, CFTC Commitments
+   of Traders (free since 1995). Net non-commercial positioning z-scored over a
+   trailing 156-week window; long a commodity ETF (GLD/SLV/USO) when speculators are
+   net-long vs their own history. **PIT:** the Tuesday report is only usable from the
+   Friday release (`effective_date = report + 3 business days`).
+11. **Energy inventories** (`eia`) — pre-registered 2026-10-23, EIA Weekly Petroleum
+   Status Report (free, API key). Long energy names (USO/XOM) when crude stocks are
+   drawing (trailing 4-week change < 0). **PIT:** the Friday period is usable from
+   the following Wednesday (`effective_date = period + 5 calendar days`).
+12. **Insider buying** (`insider`) — pre-registered 2026-10-23, SEC Form 4 (free via
+   EDGAR). Cross-sectional: long the top `top_quantile` by trailing 63-day net
+   insider-buy flow, over the equity subset. **PIT:** anchored on the filing
+   (acceptance) date, never `transaction_date`; a filing accepted after 16:00 ET is
+   effective the next business day. FINRA short interest is deliberately **not**
+   included — its free history is ~12-24 months and cannot pass a 10-year gate.
+13. **Volatility term structure** (`vix_regime`) — pre-registered 2026-10-23, Cboe
+   VIX/VIX3M daily CSVs (free). Market-wide gate: long every symbol when the VIX/VIX3M
+   ratio < 1.0 (contango/calm), flat when the curve is inverted (near-term stress).
+
 
 ## 4. Out-of-sample protocol
 

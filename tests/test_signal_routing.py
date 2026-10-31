@@ -16,6 +16,11 @@ _BUILDERS = [
     "arthaai.factors.regime.regime_signal_map",
     "arthaai.data.fundamentals_pit.value_signal_map",
     "arthaai.factors.macro_regime.macro_signal_map",
+    "arthaai.factors.exogenous.cftc_signal_map",
+    "arthaai.factors.exogenous.eia_signal_map",
+    "arthaai.factors.exogenous.insider_signal_map",
+    "arthaai.factors.exogenous.vix_regime_signal_map",
+    "arthaai.factors.xgb_signal.xgb_signal_map",
 ]
 
 
@@ -148,3 +153,20 @@ def test_promote_reports_and_persists_the_most_recent_window(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "most recent window 350–500" in result.output
     assert persisted["sharpe"] == 2.0
+
+
+def test_warn_short_history_helper_thresholds():
+    assert cli._warn_short_history(cli.E3_MIN_BARS - 1, 3100, context="GLD") is True
+    assert cli._warn_short_history(cli.E3_MIN_BARS, 3100, context="GLD") is False
+
+
+def test_promote_sweep_warns_on_short_stored_history(monkeypatch):
+    # _fake_windows tops out at 500 bars (< the ~10y E3 minimum), so the sweep must
+    # warn even though --limit is large: load_ohlcv cannot pad a shallow table.
+    monkeypatch.setattr(cli, "_promote_windows", _fake_windows({}))
+    result = CliRunner().invoke(
+        cli.app, ["promote-sweep", "--symbols", "GLD", "--signal", "trend", "--no-save"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "warning" in result.output.lower()
+    assert str(cli.E3_MIN_BARS) in result.output

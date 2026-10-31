@@ -43,6 +43,7 @@ sentiment = ["transformers>=4.40", "torch>=2.2"]
 openbb = ["openbb>=4.0", "openbb-yfinance>=1.0"]
 alternatives = ["pandas-datareader>=0.10", "QuantLib>=1.35", "planetary-computer>=1.0", "pystac-client>=0.7"]
 execution = ["openai>=1.30", "nautilus_trader>=1.200", "alpaca-py>=0.30"]
+ml = ["xgboost>=2.0", "scikit-learn>=1.4"]
 dev = ["ruff>=0.6", "pytest>=8.0", "httpx>=0.27"]
 
 [project.scripts]

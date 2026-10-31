@@ -9,6 +9,12 @@ from typing import Any, TypedDict
 import httpx
 import pandas as pd
 
+from arthaai.data.pit import release_lag_shift
+
+# EIA Weekly Petroleum Status Report: a Friday period is published the following
+# Wednesday (~5 calendar days). A Monday federal-holiday week can add a day.
+EIA_WPSR_RELEASE_CALENDAR_DAYS = 5
+
 
 class OptionGreeks(TypedDict):
     price: float
@@ -46,8 +52,16 @@ class AlternativeAssetFetcher:
         end: str | None = None,
         facets: dict[str, list[str]] | None = None,
         length: int = 5000,
+        release_lag_days: int = 0,
     ) -> pd.DataFrame:
-        """Fetch one EIA v2 data route and normalize its period/value columns."""
+        """Fetch one EIA v2 data route and normalize its period/value columns.
+
+        ``period`` is the *period-ending* date, not the release date. When
+        ``release_lag_days`` is set (e.g. 5 for the weekly petroleum status
+        report, whose Friday period is published the following Wednesday), an
+        ``effective_ts`` column is added = ``ts + release_lag_days`` so callers
+        can align point-in-time and never trade on pre-release data.
+        """
         if not self._eia_api_key:
             raise RuntimeError("Set EIA_API_KEY to query the EIA Open Data API.")
         params: dict[str, Any] = {
@@ -69,19 +83,28 @@ class AlternativeAssetFetcher:
         payload = response.json()
         records = payload.get("response", {}).get("data", [])
         if not records:
-            return pd.DataFrame(columns=["ts", "value"])
+            return pd.DataFrame(columns=["ts", "value", "effective_ts"])
         frame = pd.DataFrame(records)
         if "period" not in frame or "value" not in frame:
             raise ValueError("EIA response does not contain period and value fields")
         frame["ts"] = pd.to_datetime(frame.pop("period"), utc=True, errors="coerce")
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+        # Shared release-lag primitive so EIA normalisation matches CFTC/Form 4.
+        frame["effective_ts"] = release_lag_shift(frame["ts"], calendar_days=release_lag_days)
         return frame.dropna(subset=["ts"]).sort_values("ts").reset_index(drop=True)
 
-    def get_crude_oil_inventory(self, **kwargs) -> pd.DataFrame:
-        """Fetch weekly US crude oil stocks from the EIA petroleum endpoint."""
+    def get_crude_oil_inventory(
+        self, *, release_lag_days: int = EIA_WPSR_RELEASE_CALENDAR_DAYS, **kwargs
+    ) -> pd.DataFrame:
+        """Fetch weekly US crude oil stocks from the EIA petroleum endpoint.
+
+        Defaults to the WPSR ~5-day release lag (Friday period -> Wednesday
+        release). A holiday week can add a day; override the arg if needed.
+        """
         return self.get_eia_series(
             "petroleum/stoc/wstk",
             facets={"duoarea": ["NUS"], "product": ["EPC0"], "process": ["SAE"]},
+            release_lag_days=release_lag_days,
             **kwargs,
         )
 

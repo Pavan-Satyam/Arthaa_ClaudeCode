@@ -451,6 +451,34 @@ def latest_ts(symbol: str, interval: str = "1d") -> datetime | None:
         return cur.fetchone()[0]
 
 
+def ohlcv_depth(
+    symbols: list[str], interval: str = "1d"
+) -> list[tuple[str, int, datetime | None, datetime | None]]:
+    """Per-symbol ``(symbol, bars, first_ts, last_ts)`` via one aggregate query.
+
+    Backs the ``history-depth`` pre-flight audit so a shallow table is caught
+    without materializing full OHLCV frames. Requested order is preserved and
+    symbols with no stored bars are returned with ``bars=0``.
+    """
+    wanted = [str(s).upper() for s in symbols]
+    if not wanted:
+        return []
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT symbol, count(DISTINCT ts::date), min(ts), max(ts)
+            FROM ohlcv WHERE interval = %s AND symbol = ANY(%s)
+            GROUP BY symbol;
+            """,
+            (interval, wanted),
+        )
+        by_symbol = {
+            str(sym).upper(): (count, first, last)
+            for sym, count, first, last in cur.fetchall()
+        }
+    return [(sym, *by_symbol.get(sym, (0, None, None))) for sym in wanted]
+
+
 # ---- Signal promotion (OOS gate) --------------------------------------------
 
 def upsert_signal_promotion(

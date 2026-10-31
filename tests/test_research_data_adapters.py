@@ -152,6 +152,12 @@ def test_alternative_fetcher_normalizes_eia_and_ecb_series():
 
     assert inventory["value"].tolist() == [419.0, 420.5]
     assert "area-name" in inventory.columns
+    # PIT: the Friday period is only public on the following Wednesday (+5 days).
+    assert "effective_ts" in inventory.columns
+    assert inventory["effective_ts"].tolist() == [
+        pd.Timestamp("2025-02-05", tz="UTC"),
+        pd.Timestamp("2025-02-12", tz="UTC"),
+    ]
     assert list(fx.columns) == ["ts", "rate"]
     assert fx["rate"].tolist() == [1.02, 1.03]
 
